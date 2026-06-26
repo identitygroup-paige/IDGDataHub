@@ -1,0 +1,10 @@
+-r requirements.in
+
+black
+ruff
+pytest
+mypy
+pre-commit
+ipykernel
+jupyterlab
+pip-tools

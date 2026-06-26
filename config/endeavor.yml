@@ -1,0 +1,20 @@
+source:
+  name: ENDEAVOR
+  env_prefix: ENDEAVOR
+  database: EndeavorDB
+  schema: dbo
+
+target:
+  database: DATA_VALIDATION
+  schema: RAW_SQL_SERVER
+  table_suffix: _ENDEAV
+
+load:
+  mode: full_refresh
+  chunk_size: 50000
+  include_tables: []
+  exclude_empty_tables: true
+
+metadata:
+  database: DATA_VALIDATION
+  schema: METADATA

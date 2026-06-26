@@ -1,0 +1,39 @@
+#
+# IDGDataHub
+# Top-level dependencies only.
+# This file is the source of truth.
+#
+
+# DataFrames
+pandas>=2.3
+
+# SQL Server
+pyodbc>=5.2
+sqlalchemy>=2.0
+
+# Snowflake
+snowflake-connector-python[pandas]>=3.17
+
+# Amazon Redshift
+redshift-connector>=2.1
+
+# Environment variables
+python-dotenv>=1.1
+
+# Configuration
+pyyaml>=6.0
+
+# Parquet
+pyarrow>=21.0
+
+# Authentication
+cryptography>=45
+
+# Progress bars
+tqdm>=4.67
+
+# Better retry logic
+tenacity>=9.0
+
+# HTTP/API calls
+requests>=2.32
