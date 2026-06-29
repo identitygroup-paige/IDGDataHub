@@ -1,4 +1,6 @@
 from connectors.sqlserver import get_sqlserver_connection
+import pandas as pd
+
 
 from ddl.snowflake_ddl import (
     clean_identifier,
@@ -68,7 +70,6 @@ def load_table(
         chunk_size=chunk_size,
     )
 
-import pandas as pd
 
 def get_row_count(source_conn, source_config, table_name):
     query = f"""
@@ -77,3 +78,65 @@ def get_row_count(source_conn, source_config, table_name):
     """
 
     return int(pd.read_sql(query, source_conn)["ROW_COUNT"].iloc[0])
+
+
+def get_max_watermark(source_conn, source_config, table_name, watermark_column):
+    query = f"""
+        SELECT MAX([{watermark_column}]) AS MAX_WATERMARK
+        FROM [{source_config["schema"]}].[{table_name}]
+    """
+
+    result = pd.read_sql(query, source_conn)["MAX_WATERMARK"].iloc[0]
+    return None if pd.isna(result) else result
+
+
+def build_full_refresh_query(source_config, table_name):
+    return {
+        "query": f"""
+            SELECT *
+            FROM [{source_config["schema"]}].[{table_name}]
+        """,
+        "params": None,
+        "strategy": "full_refresh",
+    }
+
+
+def build_incremental_query(
+    source_config,
+    table_name,
+    watermark_column,
+    watermark_value,
+):
+    if watermark_value is None:
+        return build_full_refresh_query(source_config, table_name)
+
+    return {
+        "query": f"""
+            SELECT *
+            FROM [{source_config["schema"]}].[{table_name}]
+            WHERE [{watermark_column}] > ?
+        """,
+        "params": [watermark_value],
+        "strategy": "timestamp",
+    }
+
+
+def get_incremental_row_count(
+    source_conn,
+    source_config,
+    table_name,
+    watermark_column,
+    watermark_value,
+):
+    if watermark_value is None:
+        return get_row_count(source_conn, source_config, table_name)
+
+    query = f"""
+        SELECT COUNT(*) AS ROW_COUNT
+        FROM [{source_config["schema"]}].[{table_name}]
+        WHERE [{watermark_column}] > ?
+    """
+
+    return int(
+        pd.read_sql(query, source_conn, params=[watermark_value])["ROW_COUNT"].iloc[0]
+    )

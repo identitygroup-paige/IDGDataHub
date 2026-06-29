@@ -1,5 +1,13 @@
 from datetime import UTC, datetime
 
+def normalize_watermark_value(value):
+    if value is None:
+        return None
+
+    if hasattr(value, "to_pydatetime"):
+        return value.to_pydatetime()
+
+    return value
 
 def get_watermark(
     sf_conn,
@@ -52,6 +60,7 @@ def update_watermark(
     metadata_database: str,
     metadata_schema: str,
 ) -> None:
+    watermark_value = normalize_watermark_value(watermark_value)
     with sf_conn.cursor() as cur:
         cur.execute(
             f"""

@@ -19,6 +19,9 @@ load:
     - Appointments
   exclude_empty_tables: true
 
+planning:
+  enabled: true
+
 incremental:
   enabled: true
   default_strategy: full_refresh

@@ -16,6 +16,7 @@ from metadata.ingestion_metadata import (
     write_table_catalog,
     write_validation_results,
 )
+from metadata.watermarks import get_watermark, update_watermark
 from sources.registry import get_source_adapter
 
 
@@ -50,6 +51,12 @@ def main() -> None:
     load = config["load"]
     metadata_config = config["metadata"]
 
+    planning_config = config.get("planning", {})
+    planning_enabled = planning_config.get("enabled", False)
+
+    incremental_config = config.get("incremental", {})
+    incremental_tables = incremental_config.get("tables", {})
+
     source_adapter = get_source_adapter(source["type"])
 
     run_id = new_run_id()
@@ -64,6 +71,7 @@ def main() -> None:
     print(f"Target: {target['database']}.{target['schema']}")
     print(f"Mode: {load['mode']}")
     print(f"Chunk size: {load['chunk_size']:,}")
+    print(f"Planning mode: {'enabled' if planning_enabled else 'disabled'}")
 
     source_conn = source_adapter.get_connection(source)
     sf_conn = get_snowflake_connection(
@@ -127,6 +135,39 @@ def main() -> None:
             )
             print_step(f"Source row count: {source_row_count:,}")
 
+            incremental_table_config = incremental_tables.get(source_table)
+            existing_watermark = None
+            max_watermark = None
+
+            if incremental_table_config:
+                watermark_column = incremental_table_config["watermark_column"]
+
+                existing_watermark = get_watermark(
+                    sf_conn=sf_conn,
+                    source_config=source,
+                    target_config=target,
+                    source_table=source_table,
+                    target_table=target_table,
+                    watermark_column=watermark_column,
+                    metadata_database=metadata_config["database"],
+                    metadata_schema=metadata_config["schema"],
+                )
+
+                if planning_enabled:
+                    planned_incremental_rows = source_adapter.get_incremental_row_count(
+                        source_conn=source_conn,
+                        source_config=source,
+                        table_name=source_table,
+                        watermark_column=watermark_column,
+                        watermark_value=existing_watermark,
+                    )
+
+                    print_step(
+                        f"Planning mode: {source_table} would load "
+                        f"{planned_incremental_rows:,} incremental row(s) "
+                        f"using {watermark_column} > {existing_watermark}"
+                    )
+
             if source_row_count == 0:
                 loaded_rows = 0
                 print_step("Source table is empty; skipping data load")
@@ -154,6 +195,31 @@ def main() -> None:
             row_count_match = source_row_count == loaded_rows == target_row_count
             loaded_at = datetime.now(UTC)
             load_status = "LOADED" if source_row_count > 0 else "EMPTY"
+
+            if incremental_table_config:
+                watermark_column = incremental_table_config["watermark_column"]
+
+                max_watermark = source_adapter.get_max_watermark(
+                    source_conn=source_conn,
+                    source_config=source,
+                    table_name=source_table,
+                    watermark_column=watermark_column,
+                )
+
+                if max_watermark is not None:
+                    update_watermark(
+                        sf_conn=sf_conn,
+                        source_config=source,
+                        target_config=target,
+                        source_table=source_table,
+                        target_table=target_table,
+                        watermark_column=watermark_column,
+                        watermark_value=max_watermark,
+                        run_id=run_id,
+                        metadata_database=metadata_config["database"],
+                        metadata_schema=metadata_config["schema"],
+                    )
+                    print_step(f"Watermark updated: {watermark_column} = {max_watermark}")
 
             table_catalog_rows.append(
                 {
@@ -203,9 +269,7 @@ def main() -> None:
                         "SOURCE_COLUMN": row["COLUMN_NAME"],
                         "SOURCE_ORDINAL_POSITION": row["ORDINAL_POSITION"],
                         "SOURCE_DATA_TYPE": row["DATA_TYPE"],
-                        "SOURCE_CHARACTER_MAXIMUM_LENGTH": row[
-                            "CHARACTER_MAXIMUM_LENGTH"
-                        ],
+                        "SOURCE_CHARACTER_MAXIMUM_LENGTH": row["CHARACTER_MAXIMUM_LENGTH"],
                         "SOURCE_NUMERIC_PRECISION": row["NUMERIC_PRECISION"],
                         "SOURCE_NUMERIC_SCALE": row["NUMERIC_SCALE"],
                         "SOURCE_IS_NULLABLE": row["IS_NULLABLE"],
