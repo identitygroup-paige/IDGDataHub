@@ -65,7 +65,7 @@ def main() -> None:
     print(f"Mode: {load['mode']}")
     print(f"Chunk size: {load['chunk_size']:,}")
 
-    source_conn = get_source_adapter(source["type"]).get_connection(source)
+    source_conn = source_adapter.get_connection(source)
     sf_conn = get_snowflake_connection(
         database=target["database"],
         schema=target["schema"],
@@ -120,6 +120,13 @@ def main() -> None:
             execute_ddl(sf_conn, ddl)
             print_step("Snowflake table created/replaced")
 
+            source_row_count = source_adapter.get_row_count(
+                source_conn=source_conn,
+                source_config=source,
+                table_name=source_table,
+            )
+            print_step(f"Source row count: {source_row_count:,}")
+
             loaded_rows = source_adapter.load_table(
                 source_conn=source_conn,
                 sf_conn=sf_conn,
@@ -140,7 +147,7 @@ def main() -> None:
                 target_table=target_table,
             )
 
-            row_count_match = loaded_rows == target_row_count
+            row_count_match = source_row_count == loaded_rows == target_row_count
             loaded_at = datetime.now(UTC)
 
             table_catalog_rows.append(
@@ -153,7 +160,7 @@ def main() -> None:
                     "TARGET_DATABASE": target["database"],
                     "TARGET_SCHEMA": target["schema"],
                     "TARGET_TABLE": target_table,
-                    "SOURCE_ROW_COUNT": loaded_rows,
+                    "SOURCE_ROW_COUNT": source_row_count,
                     "TARGET_ROW_COUNT": target_row_count,
                     "ROW_COUNT_MATCH": row_count_match,
                     "LOAD_STATUS": "LOADED",
@@ -169,9 +176,13 @@ def main() -> None:
                     "TARGET_DATABASE": target["database"],
                     "TARGET_SCHEMA": target["schema"],
                     "TARGET_TABLE": target_table,
-                    "VALIDATION_NAME": "ROW_COUNT_MATCH",
+                    "VALIDATION_NAME": "SOURCE_LOADED_TARGET_ROW_COUNT_MATCH",
                     "VALIDATION_STATUS": "PASS" if row_count_match else "FAIL",
-                    "VALIDATION_VALUE": f"loaded={loaded_rows}; target={target_row_count}",
+                    "VALIDATION_VALUE": (
+                        f"source={source_row_count}; "
+                        f"loaded={loaded_rows}; "
+                        f"target={target_row_count}"
+                    ),
                     "VALIDATED_AT": loaded_at,
                 }
             )
@@ -202,11 +213,23 @@ def main() -> None:
                     }
                 )
 
-            table_results.append((source_table, target_table, loaded_rows, elapsed))
+            table_results.append(
+                (
+                    source_table,
+                    target_table,
+                    source_row_count,
+                    loaded_rows,
+                    target_row_count,
+                    elapsed,
+                    row_count_match,
+                )
+            )
+
             print_step(f"Loaded {loaded_rows:,} rows in {elapsed:,.1f} seconds")
             print_step(
                 f"Validation {'passed' if row_count_match else 'failed'} "
-                f"(target row count: {target_row_count:,})"
+                f"(source={source_row_count:,}; loaded={loaded_rows:,}; "
+                f"target={target_row_count:,})"
             )
 
         write_table_catalog(
@@ -239,10 +262,22 @@ def main() -> None:
         print_step("Metadata run log completed")
 
         print_header("Load Summary")
-        for source_table, target_table, loaded_rows, elapsed in table_results:
+        for (
+            source_table,
+            target_table,
+            source_row_count,
+            loaded_rows,
+            target_row_count,
+            elapsed,
+            row_count_match,
+        ) in table_results:
             print(
                 f"✓ {source_table} → {target_table}: "
-                f"{loaded_rows:,} rows ({elapsed:,.1f}s)"
+                f"source={source_row_count:,}, "
+                f"loaded={loaded_rows:,}, "
+                f"target={target_row_count:,}, "
+                f"status={'PASS' if row_count_match else 'FAIL'} "
+                f"({elapsed:,.1f}s)"
             )
 
         total_elapsed = perf_counter() - run_start

@@ -67,3 +67,13 @@ def load_table(
         column_metadata=column_metadata,
         chunk_size=chunk_size,
     )
+
+import pandas as pd
+
+def get_row_count(source_conn, source_config, table_name):
+    query = f"""
+        SELECT COUNT(*) AS ROW_COUNT
+        FROM [{source_config["schema"]}].[{table_name}]
+    """
+
+    return int(pd.read_sql(query, source_conn)["ROW_COUNT"].iloc[0])
