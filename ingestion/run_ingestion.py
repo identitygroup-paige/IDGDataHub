@@ -38,6 +38,62 @@ def print_step(message: str) -> None:
     print(f"✓ {message}")
 
 
+def build_load_plan(
+    source_adapter,
+    source: dict,
+    load_mode: str,
+    source_table: str,
+    incremental_table_config: dict | None,
+    watermark_column,
+    existing_watermark,
+):
+    if load_mode == "full_refresh":
+        return source_adapter.build_full_refresh_query(
+            source_config=source,
+            table_name=source_table,
+        )
+
+    if load_mode in ("incremental_plan", "incremental"):
+        if incremental_table_config:
+            return source_adapter.build_incremental_query(
+                source_config=source,
+                table_name=source_table,
+                watermark_column=watermark_column,
+                watermark_value=existing_watermark,
+            )
+
+        return source_adapter.build_full_refresh_query(
+            source_config=source,
+            table_name=source_table,
+        )
+
+    raise ValueError(f"Unknown load mode: {load_mode}")
+
+
+def validate_row_counts(
+    load_plan: dict,
+    source_row_count: int,
+    loaded_rows: int,
+    target_row_count: int,
+):
+    if load_plan["strategy"] == "full_refresh":
+        row_count_match = source_row_count == loaded_rows == target_row_count
+        validation_value = (
+            f"source={source_row_count}; "
+            f"loaded={loaded_rows}; "
+            f"target={target_row_count}"
+        )
+    else:
+        row_count_match = loaded_rows == target_row_count
+        validation_value = (
+            f"source_total={source_row_count}; "
+            f"incremental_loaded={loaded_rows}; "
+            f"target_incremental={target_row_count}"
+        )
+
+    return row_count_match, validation_value
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -50,6 +106,8 @@ def main() -> None:
     target = config["target"]
     load = config["load"]
     metadata_config = config["metadata"]
+
+    load_mode = load["mode"]
 
     planning_config = config.get("planning", {})
     planning_enabled = planning_config.get("enabled", False)
@@ -69,7 +127,7 @@ def main() -> None:
     print(f"Run ID: {run_id}")
     print(f"Source: {source['name']} ({source['database']}.{source['schema']})")
     print(f"Target: {target['database']}.{target['schema']}")
-    print(f"Mode: {load['mode']}")
+    print(f"Mode: {load_mode}")
     print(f"Chunk size: {load['chunk_size']:,}")
     print(f"Planning mode: {'enabled' if planning_enabled else 'disabled'}")
 
@@ -91,7 +149,7 @@ def main() -> None:
             source_schema=source["schema"],
             target_database=target["database"],
             target_schema=target["schema"],
-            load_mode=load["mode"],
+            load_mode=load_mode,
             metadata_database=metadata_config["database"],
             metadata_schema=metadata_config["schema"],
         )
@@ -136,12 +194,8 @@ def main() -> None:
             print_step(f"Source row count: {source_row_count:,}")
 
             incremental_table_config = incremental_tables.get(source_table)
+            watermark_column = None
             existing_watermark = None
-
-            load_plan = source_adapter.build_full_refresh_query(
-                source_config=source,
-                table_name=source_table,
-            )
 
             if incremental_table_config:
                 watermark_column = incremental_table_config["watermark_column"]
@@ -172,6 +226,16 @@ def main() -> None:
                         f"using {watermark_column} > {existing_watermark}"
                     )
 
+            load_plan = build_load_plan(
+                source_adapter=source_adapter,
+                source=source,
+                load_mode=load_mode,
+                source_table=source_table,
+                incremental_table_config=incremental_table_config,
+                watermark_column=watermark_column,
+                existing_watermark=existing_watermark,
+            )
+
             print_step(f"Load strategy selected: {load_plan['strategy']}")
 
             if source_row_count == 0:
@@ -199,13 +263,17 @@ def main() -> None:
                 target_table=target_table,
             )
 
-            row_count_match = source_row_count == loaded_rows == target_row_count
+            row_count_match, validation_value = validate_row_counts(
+                load_plan=load_plan,
+                source_row_count=source_row_count,
+                loaded_rows=loaded_rows,
+                target_row_count=target_row_count,
+            )
+
             loaded_at = datetime.now(UTC)
             load_status = "LOADED" if source_row_count > 0 else "EMPTY"
 
-            if incremental_table_config:
-                watermark_column = incremental_table_config["watermark_column"]
-
+            if incremental_table_config and load_mode != "incremental_plan":
                 max_watermark = source_adapter.get_max_watermark(
                     source_conn=source_conn,
                     source_config=source,
@@ -256,11 +324,7 @@ def main() -> None:
                     "TARGET_TABLE": target_table,
                     "VALIDATION_NAME": "SOURCE_LOADED_TARGET_ROW_COUNT_MATCH",
                     "VALIDATION_STATUS": "PASS" if row_count_match else "FAIL",
-                    "VALIDATION_VALUE": (
-                        f"source={source_row_count}; "
-                        f"loaded={loaded_rows}; "
-                        f"target={target_row_count}"
-                    ),
+                    "VALIDATION_VALUE": validation_value,
                     "VALIDATED_AT": loaded_at,
                 }
             )
