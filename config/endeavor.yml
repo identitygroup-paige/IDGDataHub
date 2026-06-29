@@ -13,8 +13,32 @@ target:
 load:
   mode: full_refresh
   chunk_size: 50000
-  include_tables: []
+  include_tables:
+    - __EFMigrationsHistory
+    - Actions
+    - Appointments
   exclude_empty_tables: true
+
+incremental:
+  enabled: true
+  default_strategy: full_refresh
+
+  tables:
+    Actions:
+      strategy: timestamp
+      watermark_column: ChangeDate
+
+    StatusDetails:
+      strategy: timestamp
+      watermark_column: Timestamp
+
+    ProjectNotes:
+      strategy: timestamp
+      watermark_column: Timestamp
+
+    E4Jobs:
+      strategy: timestamp
+      watermark_column: Updated
 
 metadata:
   database: DATA_VALIDATION
