@@ -1,20 +1,9 @@
-from connectors.sqlserver import get_sqlserver_connection
 import pandas as pd
 
-
-from ddl.snowflake_ddl import (
-    clean_identifier,
-    sqlserver_to_snowflake_type,
-)
-
-from metadata.sqlserver_metadata import (
-    get_source_tables,
-    get_column_metadata,
-)
-
-from loaders.sqlserver_loader import (
-    load_sqlserver_table_to_snowflake,
-)
+from connectors.sqlserver import get_sqlserver_connection
+from ddl.snowflake_ddl import clean_identifier, sqlserver_to_snowflake_type
+from loaders.sqlserver_loader import load_sqlserver_table_to_snowflake
+from metadata.sqlserver_metadata import get_column_metadata, get_source_tables
 
 
 def get_connection(source_config):
@@ -40,10 +29,7 @@ def get_metadata(source_conn, source_config, table_name):
 
 
 def get_target_table_name(source_table, target_config):
-    return (
-        f"{clean_identifier(source_table)}"
-        f"{target_config['table_suffix']}"
-    )
+    return f"{clean_identifier(source_table)}{target_config['table_suffix']}"
 
 
 def load_table(
@@ -55,7 +41,11 @@ def load_table(
     target_table,
     column_metadata,
     chunk_size,
+    load_plan=None,
 ):
+    query = load_plan.get("query") if load_plan else None
+    query_params = load_plan.get("params") if load_plan else None
+
     return load_sqlserver_table_to_snowflake(
         sql_conn=source_conn,
         sf_conn=sf_conn,
@@ -68,6 +58,8 @@ def load_table(
         target_table=target_table,
         column_metadata=column_metadata,
         chunk_size=chunk_size,
+        query=query,
+        query_params=query_params,
     )
 
 
@@ -96,7 +88,7 @@ def build_full_refresh_query(source_config, table_name):
             SELECT *
             FROM [{source_config["schema"]}].[{table_name}]
         """,
-        "params": None,
+        "params": [],
         "strategy": "full_refresh",
     }
 

@@ -12,7 +12,10 @@ def normalize_chunk_for_load(
         zip(column_metadata["COLUMN_NAME"], column_metadata["SNOWFLAKE_COLUMN_NAME"])
     )
     type_map = dict(
-        zip(column_metadata["SNOWFLAKE_COLUMN_NAME"], column_metadata["SNOWFLAKE_DATA_TYPE"])
+        zip(
+            column_metadata["SNOWFLAKE_COLUMN_NAME"],
+            column_metadata["SNOWFLAKE_DATA_TYPE"],
+        )
     )
 
     chunk = chunk.rename(columns=rename_map)
@@ -38,20 +41,32 @@ def normalize_chunk_for_load(
 def load_sqlserver_table_to_snowflake(
     sql_conn,
     sf_conn,
-    source_system: str,
-    source_database: str,
-    source_schema: str,
-    source_table: str,
-    target_database: str,
-    target_schema: str,
-    target_table: str,
-    column_metadata: pd.DataFrame,
-    chunk_size: int,
-) -> int:
+    source_system,
+    source_database,
+    source_schema,
+    source_table,
+    target_database,
+    target_schema,
+    target_table,
+    column_metadata,
+    chunk_size,
+    query=None,
+    query_params=None,
+):
     total_loaded = 0
-    query = f"SELECT * FROM [{source_schema}].[{source_table}]"
 
-    for chunk in pd.read_sql(query, sql_conn, chunksize=chunk_size):
+    if query is None:
+        query = f"SELECT * FROM [{source_schema}].[{source_table}]"
+
+    if query_params is None:
+        query_params = []
+
+    for chunk in pd.read_sql(
+        query,
+        sql_conn,
+        params=query_params,
+        chunksize=chunk_size,
+    ):
         chunk = normalize_chunk_for_load(chunk, column_metadata)
 
         chunk["_SOURCE_SYSTEM"] = source_system

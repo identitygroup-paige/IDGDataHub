@@ -137,7 +137,11 @@ def main() -> None:
 
             incremental_table_config = incremental_tables.get(source_table)
             existing_watermark = None
-            max_watermark = None
+
+            load_plan = source_adapter.build_full_refresh_query(
+                source_config=source,
+                table_name=source_table,
+            )
 
             if incremental_table_config:
                 watermark_column = incremental_table_config["watermark_column"]
@@ -168,6 +172,8 @@ def main() -> None:
                         f"using {watermark_column} > {existing_watermark}"
                     )
 
+            print_step(f"Load strategy selected: {load_plan['strategy']}")
+
             if source_row_count == 0:
                 loaded_rows = 0
                 print_step("Source table is empty; skipping data load")
@@ -181,6 +187,7 @@ def main() -> None:
                     target_table=target_table,
                     column_metadata=metadata,
                     chunk_size=load["chunk_size"],
+                    load_plan=load_plan,
                 )
 
             elapsed = perf_counter() - table_start
@@ -269,7 +276,9 @@ def main() -> None:
                         "SOURCE_COLUMN": row["COLUMN_NAME"],
                         "SOURCE_ORDINAL_POSITION": row["ORDINAL_POSITION"],
                         "SOURCE_DATA_TYPE": row["DATA_TYPE"],
-                        "SOURCE_CHARACTER_MAXIMUM_LENGTH": row["CHARACTER_MAXIMUM_LENGTH"],
+                        "SOURCE_CHARACTER_MAXIMUM_LENGTH": row[
+                            "CHARACTER_MAXIMUM_LENGTH"
+                        ],
                         "SOURCE_NUMERIC_PRECISION": row["NUMERIC_PRECISION"],
                         "SOURCE_NUMERIC_SCALE": row["NUMERIC_SCALE"],
                         "SOURCE_IS_NULLABLE": row["IS_NULLABLE"],
@@ -291,6 +300,7 @@ def main() -> None:
                     target_row_count,
                     elapsed,
                     row_count_match,
+                    load_plan["strategy"],
                 )
             )
 
@@ -339,9 +349,11 @@ def main() -> None:
             target_row_count,
             elapsed,
             row_count_match,
+            strategy,
         ) in table_results:
             print(
                 f"✓ {source_table} → {target_table}: "
+                f"strategy={strategy}, "
                 f"source={source_row_count:,}, "
                 f"loaded={loaded_rows:,}, "
                 f"target={target_row_count:,}, "
