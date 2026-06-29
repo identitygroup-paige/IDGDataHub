@@ -1,0 +1,11 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+.DS_Store
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+output/
+logs/
