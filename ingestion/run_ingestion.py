@@ -6,14 +6,7 @@ import yaml
 from dotenv import load_dotenv
 
 from connectors.snowflake import get_snowflake_connection
-from connectors.sqlserver import get_sqlserver_connection
-from ddl.snowflake_ddl import (
-    clean_identifier,
-    execute_ddl,
-    generate_create_table_sql,
-    sqlserver_to_snowflake_type,
-)
-from loaders.sqlserver_loader import load_sqlserver_table_to_snowflake
+from ddl.snowflake_ddl import execute_ddl, generate_create_table_sql
 from metadata.ingestion_metadata import (
     finish_run_log,
     get_snowflake_row_count,
@@ -23,7 +16,7 @@ from metadata.ingestion_metadata import (
     write_table_catalog,
     write_validation_results,
 )
-from metadata.sqlserver_metadata import get_column_metadata, get_source_tables
+from sources.registry import get_source_adapter
 
 
 load_dotenv()
@@ -57,10 +50,7 @@ def main() -> None:
     load = config["load"]
     metadata_config = config["metadata"]
 
-    if source["type"] != "sqlserver":
-        raise NotImplementedError(
-            f"Source type '{source['type']}' is not implemented yet."
-        )
+    source_adapter = get_source_adapter(source["type"])
 
     run_id = new_run_id()
     table_catalog_rows = []
@@ -75,14 +65,14 @@ def main() -> None:
     print(f"Mode: {load['mode']}")
     print(f"Chunk size: {load['chunk_size']:,}")
 
-    sql_conn = get_sqlserver_connection(source["env_prefix"])
+    source_conn = get_source_adapter(source["type"]).get_connection(source)
     sf_conn = get_snowflake_connection(
         database=target["database"],
         schema=target["schema"],
     )
 
     try:
-        print_step("SQL Server connection successful")
+        print_step(f"{source['type']} connection successful")
         print_step("Snowflake connection successful")
 
         start_run_log(
@@ -99,26 +89,24 @@ def main() -> None:
         )
         print_step("Metadata run log started")
 
-        tables = get_source_tables(
-            sql_conn=sql_conn,
-            source_schema=source["schema"],
-            include_tables=load.get("include_tables", []),
+        tables = source_adapter.discover_tables(
+            source_conn=source_conn,
+            source_config=source,
+            load_config=load,
         )
 
         print_step(f"Found {len(tables)} source table(s)")
 
         for source_table in tables:
             table_start = perf_counter()
-            target_table = f"{clean_identifier(source_table)}{target['table_suffix']}"
+            target_table = source_adapter.get_target_table_name(source_table, target)
 
             print_header(f"Loading {source['schema']}.{source_table} → {target_table}")
 
-            metadata = get_column_metadata(
-                sql_conn=sql_conn,
-                source_schema=source["schema"],
+            metadata = source_adapter.get_metadata(
+                source_conn=source_conn,
+                source_config=source,
                 table_name=source_table,
-                clean_identifier=clean_identifier,
-                type_mapper=sqlserver_to_snowflake_type,
             )
             print_step(f"Metadata discovered ({len(metadata)} columns)")
 
@@ -132,15 +120,12 @@ def main() -> None:
             execute_ddl(sf_conn, ddl)
             print_step("Snowflake table created/replaced")
 
-            loaded_rows = load_sqlserver_table_to_snowflake(
-                sql_conn=sql_conn,
+            loaded_rows = source_adapter.load_table(
+                source_conn=source_conn,
                 sf_conn=sf_conn,
-                source_system=source["name"],
-                source_database=source["database"],
-                source_schema=source["schema"],
+                source_config=source,
+                target_config=target,
                 source_table=source_table,
-                target_database=target["database"],
-                target_schema=target["schema"],
                 target_table=target_table,
                 column_metadata=metadata,
                 chunk_size=load["chunk_size"],
@@ -275,7 +260,7 @@ def main() -> None:
         raise
 
     finally:
-        sql_conn.close()
+        source_conn.close()
         sf_conn.close()
 
 
