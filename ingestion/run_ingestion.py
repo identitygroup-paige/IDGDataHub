@@ -196,6 +196,7 @@ def main() -> None:
             incremental_table_config = incremental_tables.get(source_table)
             watermark_column = None
             existing_watermark = None
+            planned_incremental_rows = None
 
             if incremental_table_config:
                 watermark_column = incremental_table_config["watermark_column"]
@@ -238,7 +239,10 @@ def main() -> None:
 
             print_step(f"Load strategy selected: {load_plan['strategy']}")
 
-            if source_row_count == 0:
+            if load_mode == "incremental_plan" and load_plan["strategy"] != "full_refresh":
+                loaded_rows = 0
+                print_step("Incremental plan mode: skipping table load")
+            elif source_row_count == 0:
                 loaded_rows = 0
                 print_step("Source table is empty; skipping data load")
             else:
@@ -263,15 +267,25 @@ def main() -> None:
                 target_table=target_table,
             )
 
-            row_count_match, validation_value = validate_row_counts(
-                load_plan=load_plan,
-                source_row_count=source_row_count,
-                loaded_rows=loaded_rows,
-                target_row_count=target_row_count,
-            )
+            if load_mode == "incremental_plan" and load_plan["strategy"] != "full_refresh":
+                row_count_match = True
+                validation_value = (
+                    f"incremental_plan_only=true; "
+                    f"source_total={source_row_count}; "
+                    f"planned_rows_not_loaded={planned_incremental_rows}"
+                )
+            else:
+                row_count_match, validation_value = validate_row_counts(
+                    load_plan=load_plan,
+                    source_row_count=source_row_count,
+                    loaded_rows=loaded_rows,
+                    target_row_count=target_row_count,
+                )
 
             loaded_at = datetime.now(UTC)
-            load_status = "LOADED" if source_row_count > 0 else "EMPTY"
+            load_status = "PLANNED" if (
+                load_mode == "incremental_plan" and load_plan["strategy"] != "full_refresh"
+            ) else ("LOADED" if source_row_count > 0 else "EMPTY")
 
             if incremental_table_config and load_mode != "incremental_plan":
                 max_watermark = source_adapter.get_max_watermark(
@@ -365,6 +379,7 @@ def main() -> None:
                     elapsed,
                     row_count_match,
                     load_plan["strategy"],
+                    load_status,
                 )
             )
 
@@ -414,10 +429,12 @@ def main() -> None:
             elapsed,
             row_count_match,
             strategy,
+            load_status,
         ) in table_results:
             print(
                 f"✓ {source_table} → {target_table}: "
                 f"strategy={strategy}, "
+                f"load_status={load_status}, "
                 f"source={source_row_count:,}, "
                 f"loaded={loaded_rows:,}, "
                 f"target={target_row_count:,}, "
