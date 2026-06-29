@@ -102,7 +102,7 @@ def write_table_catalog(
         schema=metadata_schema,
         auto_create_table=False,
         overwrite=False,
-        quote_identifiers=True,
+        quote_identifiers=False,
         use_logical_type=True,
     )
 
@@ -125,7 +125,7 @@ def write_column_catalog(
         schema=metadata_schema,
         auto_create_table=False,
         overwrite=False,
-        quote_identifiers=True,
+        quote_identifiers=False,
         use_logical_type=True,
     )
 
@@ -148,6 +148,6 @@ def write_validation_results(
         schema=metadata_schema,
         auto_create_table=False,
         overwrite=False,
-        quote_identifiers=True,
+        quote_identifiers=False,
         use_logical_type=True,
     )

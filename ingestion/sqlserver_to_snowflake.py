@@ -1,4 +1,5 @@
 import argparse
+from datetime import UTC, datetime
 from time import perf_counter
 
 import yaml
@@ -13,6 +14,15 @@ from ddl.snowflake_ddl import (
     sqlserver_to_snowflake_type,
 )
 from loaders.sqlserver_loader import load_sqlserver_table_to_snowflake
+from metadata.ingestion_metadata import (
+    finish_run_log,
+    get_snowflake_row_count,
+    new_run_id,
+    start_run_log,
+    write_column_catalog,
+    write_table_catalog,
+    write_validation_results,
+)
 from metadata.sqlserver_metadata import get_column_metadata, get_source_tables
 
 
@@ -45,8 +55,16 @@ def main() -> None:
     source = config["source"]
     target = config["target"]
     load = config["load"]
+    metadata_config = config["metadata"]
+
+    run_id = new_run_id()
+    table_catalog_rows = []
+    column_catalog_rows = []
+    validation_rows = []
+    table_results = []
 
     print_header("IDGDataHub SQL Server → Snowflake Load")
+    print(f"Run ID: {run_id}")
     print(f"Source: {source['name']} ({source['database']}.{source['schema']})")
     print(f"Target: {target['database']}.{target['schema']}")
     print(f"Mode: {load['mode']}")
@@ -62,6 +80,20 @@ def main() -> None:
         print_step("SQL Server connection successful")
         print_step("Snowflake connection successful")
 
+        start_run_log(
+            sf_conn=sf_conn,
+            run_id=run_id,
+            source_system=source["name"],
+            source_database=source["database"],
+            source_schema=source["schema"],
+            target_database=target["database"],
+            target_schema=target["schema"],
+            load_mode=load["mode"],
+            metadata_database=metadata_config["database"],
+            metadata_schema=metadata_config["schema"],
+        )
+        print_step("Metadata run log started")
+
         tables = get_source_tables(
             sql_conn=sql_conn,
             source_schema=source["schema"],
@@ -69,8 +101,6 @@ def main() -> None:
         )
 
         print_step(f"Found {len(tables)} source table(s)")
-
-        table_results = []
 
         for source_table in tables:
             table_start = perf_counter()
@@ -112,16 +142,132 @@ def main() -> None:
             )
 
             elapsed = perf_counter() - table_start
-            table_results.append((source_table, target_table, loaded_rows, elapsed))
 
+            target_row_count = get_snowflake_row_count(
+                sf_conn=sf_conn,
+                target_database=target["database"],
+                target_schema=target["schema"],
+                target_table=target_table,
+            )
+
+            row_count_match = loaded_rows == target_row_count
+            loaded_at = datetime.now(UTC)
+
+            table_catalog_rows.append(
+                {
+                    "RUN_ID": run_id,
+                    "SOURCE_SYSTEM": source["name"],
+                    "SOURCE_DATABASE": source["database"],
+                    "SOURCE_SCHEMA": source["schema"],
+                    "SOURCE_TABLE": source_table,
+                    "TARGET_DATABASE": target["database"],
+                    "TARGET_SCHEMA": target["schema"],
+                    "TARGET_TABLE": target_table,
+                    "SOURCE_ROW_COUNT": loaded_rows,
+                    "TARGET_ROW_COUNT": target_row_count,
+                    "ROW_COUNT_MATCH": row_count_match,
+                    "LOAD_STATUS": "LOADED",
+                    "LOAD_SECONDS": elapsed,
+                    "LOADED_AT": loaded_at,
+                }
+            )
+
+            validation_rows.append(
+                {
+                    "RUN_ID": run_id,
+                    "SOURCE_SYSTEM": source["name"],
+                    "TARGET_DATABASE": target["database"],
+                    "TARGET_SCHEMA": target["schema"],
+                    "TARGET_TABLE": target_table,
+                    "VALIDATION_NAME": "ROW_COUNT_MATCH",
+                    "VALIDATION_STATUS": "PASS" if row_count_match else "FAIL",
+                    "VALIDATION_VALUE": f"loaded={loaded_rows}; target={target_row_count}",
+                    "VALIDATED_AT": loaded_at,
+                }
+            )
+
+            for _, row in metadata.iterrows():
+                column_catalog_rows.append(
+                    {
+                        "RUN_ID": run_id,
+                        "SOURCE_SYSTEM": source["name"],
+                        "SOURCE_DATABASE": source["database"],
+                        "SOURCE_SCHEMA": source["schema"],
+                        "SOURCE_TABLE": source_table,
+                        "SOURCE_COLUMN": row["COLUMN_NAME"],
+                        "SOURCE_ORDINAL_POSITION": row["ORDINAL_POSITION"],
+                        "SOURCE_DATA_TYPE": row["DATA_TYPE"],
+                        "SOURCE_CHARACTER_MAXIMUM_LENGTH": row[
+                            "CHARACTER_MAXIMUM_LENGTH"
+                        ],
+                        "SOURCE_NUMERIC_PRECISION": row["NUMERIC_PRECISION"],
+                        "SOURCE_NUMERIC_SCALE": row["NUMERIC_SCALE"],
+                        "SOURCE_IS_NULLABLE": row["IS_NULLABLE"],
+                        "TARGET_DATABASE": target["database"],
+                        "TARGET_SCHEMA": target["schema"],
+                        "TARGET_TABLE": target_table,
+                        "TARGET_COLUMN": row["SNOWFLAKE_COLUMN_NAME"],
+                        "TARGET_DATA_TYPE": row["SNOWFLAKE_DATA_TYPE"],
+                        "CATALOGED_AT": loaded_at,
+                    }
+                )
+
+            table_results.append((source_table, target_table, loaded_rows, elapsed))
             print_step(f"Loaded {loaded_rows:,} rows in {elapsed:,.1f} seconds")
+            print_step(
+                f"Validation {'passed' if row_count_match else 'failed'} "
+                f"(target row count: {target_row_count:,})"
+            )
+
+        write_table_catalog(
+            sf_conn,
+            table_catalog_rows,
+            metadata_config["database"],
+            metadata_config["schema"],
+        )
+        write_column_catalog(
+            sf_conn,
+            column_catalog_rows,
+            metadata_config["database"],
+            metadata_config["schema"],
+        )
+        write_validation_results(
+            sf_conn,
+            validation_rows,
+            metadata_config["database"],
+            metadata_config["schema"],
+        )
+        print_step("Metadata tables updated")
+
+        finish_run_log(
+            sf_conn=sf_conn,
+            run_id=run_id,
+            metadata_database=metadata_config["database"],
+            metadata_schema=metadata_config["schema"],
+            status="SUCCESS",
+        )
+        print_step("Metadata run log completed")
 
         print_header("Load Summary")
         for source_table, target_table, loaded_rows, elapsed in table_results:
-            print(f"✓ {source_table} → {target_table}: {loaded_rows:,} rows ({elapsed:,.1f}s)")
+            print(
+                f"✓ {source_table} → {target_table}: "
+                f"{loaded_rows:,} rows ({elapsed:,.1f}s)"
+            )
 
         total_elapsed = perf_counter() - run_start
         print(f"\nCompleted {len(table_results)} table(s) in {total_elapsed:,.1f} seconds")
+
+    except Exception as error:
+        finish_run_log(
+            sf_conn=sf_conn,
+            run_id=run_id,
+            metadata_database=metadata_config["database"],
+            metadata_schema=metadata_config["schema"],
+            status="FAILED",
+            error_message=str(error),
+        )
+        raise
 
     finally:
         sql_conn.close()
