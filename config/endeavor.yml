@@ -12,7 +12,10 @@ target:
 load:
   mode: full_refresh
   chunk_size: 50000
-  include_tables: []
+  include_tables:
+    - __EFMigrationsHistory
+    - Actions
+    - Appointments
   exclude_empty_tables: true
 
 metadata:
