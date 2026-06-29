@@ -57,13 +57,18 @@ def main() -> None:
     load = config["load"]
     metadata_config = config["metadata"]
 
+    if source["type"] != "sqlserver":
+        raise NotImplementedError(
+            f"Source type '{source['type']}' is not implemented yet."
+        )
+
     run_id = new_run_id()
     table_catalog_rows = []
     column_catalog_rows = []
     validation_rows = []
     table_results = []
 
-    print_header("IDGDataHub SQL Server → Snowflake Load")
+    print_header("IDGDataHub Ingestion Load")
     print(f"Run ID: {run_id}")
     print(f"Source: {source['name']} ({source['database']}.{source['schema']})")
     print(f"Target: {target['database']}.{target['schema']}")

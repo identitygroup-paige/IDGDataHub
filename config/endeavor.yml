@@ -1,5 +1,6 @@
 source:
   name: ENDEAVOR
+  type: sqlserver
   env_prefix: ENDEAVOR
   database: EndeavorDB
   schema: dbo
@@ -21,3 +22,7 @@ load:
 metadata:
   database: DATA_VALIDATION
   schema: METADATA
+
+validation:
+  row_count: true
+  fail_on_row_count_mismatch: false
