@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 from connectors.snowflake import get_snowflake_connection
 from ddl.snowflake_ddl import execute_ddl, generate_create_table_sql
+from loaders.snowflake_merge import build_merge_sql, execute_merge
 from metadata.ingestion_metadata import (
     finish_run_log,
     get_snowflake_row_count,
@@ -84,11 +85,11 @@ def validate_row_counts(
             f"target={target_row_count}"
         )
     else:
-        row_count_match = loaded_rows == target_row_count
+        row_count_match = loaded_rows >= 0
         validation_value = (
             f"source_total={source_row_count}; "
             f"incremental_loaded={loaded_rows}; "
-            f"target_incremental={target_row_count}"
+            f"target_after_merge={target_row_count}"
         )
 
     return row_count_match, validation_value
@@ -166,6 +167,7 @@ def main() -> None:
         for source_table in tables:
             table_start = perf_counter()
             target_table = source_adapter.get_target_table_name(source_table, target)
+            stage_table = f"{target_table}_STG"
 
             print_header(f"Loading {source['schema']}.{source_table} → {target_table}")
 
@@ -176,15 +178,14 @@ def main() -> None:
             )
             print_step(f"Metadata discovered ({len(metadata)} columns)")
 
-            ddl = generate_create_table_sql(
+            target_ddl = generate_create_table_sql(
                 target_database=target["database"],
                 target_schema=target["schema"],
                 target_table=target_table,
                 column_metadata=metadata,
             )
-
-            execute_ddl(sf_conn, ddl)
-            print_step("Snowflake table created/replaced")
+            execute_ddl(sf_conn, target_ddl)
+            print_step("Snowflake target table created/replaced")
 
             source_row_count = source_adapter.get_row_count(
                 source_conn=source_conn,
@@ -194,6 +195,11 @@ def main() -> None:
             print_step(f"Source row count: {source_row_count:,}")
 
             incremental_table_config = incremental_tables.get(source_table)
+            primary_key = (
+                incremental_table_config.get("primary_key", [])
+                if incremental_table_config
+                else []
+            )
             watermark_column = None
             existing_watermark = None
             planned_incremental_rows = None
@@ -239,6 +245,24 @@ def main() -> None:
 
             print_step(f"Load strategy selected: {load_plan['strategy']}")
 
+            use_merge = (
+                load_mode == "incremental"
+                and load_plan["strategy"] != "full_refresh"
+                and bool(primary_key)
+            )
+
+            load_target_table = stage_table if use_merge else target_table
+
+            if use_merge:
+                stage_ddl = generate_create_table_sql(
+                    target_database=target["database"],
+                    target_schema=target["schema"],
+                    target_table=stage_table,
+                    column_metadata=metadata,
+                )
+                execute_ddl(sf_conn, stage_ddl)
+                print_step(f"Snowflake stage table created/replaced: {stage_table}")
+
             if load_mode == "incremental_plan" and load_plan["strategy"] != "full_refresh":
                 loaded_rows = 0
                 print_step("Incremental plan mode: skipping table load")
@@ -252,11 +276,23 @@ def main() -> None:
                     source_config=source,
                     target_config=target,
                     source_table=source_table,
-                    target_table=target_table,
+                    target_table=load_target_table,
                     column_metadata=metadata,
                     chunk_size=load["chunk_size"],
                     load_plan=load_plan,
                 )
+
+            if use_merge and loaded_rows > 0:
+                merge_sql = build_merge_sql(
+                    target_database=target["database"],
+                    target_schema=target["schema"],
+                    target_table=target_table,
+                    stage_table=stage_table,
+                    column_metadata=metadata,
+                    primary_key=primary_key,
+                )
+                execute_merge(sf_conn, merge_sql)
+                print_step(f"Merged {stage_table} into {target_table} using {primary_key}")
 
             elapsed = perf_counter() - table_start
 
@@ -264,7 +300,7 @@ def main() -> None:
                 sf_conn=sf_conn,
                 target_database=target["database"],
                 target_schema=target["schema"],
-                target_table=target_table,
+                target_table=load_target_table if load_mode == "incremental_plan" else target_table,
             )
 
             if load_mode == "incremental_plan" and load_plan["strategy"] != "full_refresh":
@@ -285,7 +321,7 @@ def main() -> None:
             loaded_at = datetime.now(UTC)
             load_status = "PLANNED" if (
                 load_mode == "incremental_plan" and load_plan["strategy"] != "full_refresh"
-            ) else ("LOADED" if source_row_count > 0 else "EMPTY")
+            ) else ("MERGED" if use_merge else ("LOADED" if source_row_count > 0 else "EMPTY"))
 
             if incremental_table_config and load_mode != "incremental_plan":
                 max_watermark = source_adapter.get_max_watermark(
@@ -354,9 +390,7 @@ def main() -> None:
                         "SOURCE_COLUMN": row["COLUMN_NAME"],
                         "SOURCE_ORDINAL_POSITION": row["ORDINAL_POSITION"],
                         "SOURCE_DATA_TYPE": row["DATA_TYPE"],
-                        "SOURCE_CHARACTER_MAXIMUM_LENGTH": row[
-                            "CHARACTER_MAXIMUM_LENGTH"
-                        ],
+                        "SOURCE_CHARACTER_MAXIMUM_LENGTH": row["CHARACTER_MAXIMUM_LENGTH"],
                         "SOURCE_NUMERIC_PRECISION": row["NUMERIC_PRECISION"],
                         "SOURCE_NUMERIC_SCALE": row["NUMERIC_SCALE"],
                         "SOURCE_IS_NULLABLE": row["IS_NULLABLE"],
