@@ -11,8 +11,7 @@ target:
   table_suffix: _ENDEAV
 
 load:
-  load:
-  mode: incremental_plan
+  mode: incremental
   chunk_size: 50000
   include_tables:
     - __EFMigrationsHistory
