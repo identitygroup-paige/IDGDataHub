@@ -30,6 +30,8 @@ incremental:
     Actions:
       strategy: timestamp
       watermark_column: ChangeDate
+      primary_key:
+        - ID
 
     StatusDetails:
       strategy: timestamp
