@@ -127,16 +127,20 @@ def main() -> None:
             )
             print_step(f"Source row count: {source_row_count:,}")
 
-            loaded_rows = source_adapter.load_table(
-                source_conn=source_conn,
-                sf_conn=sf_conn,
-                source_config=source,
-                target_config=target,
-                source_table=source_table,
-                target_table=target_table,
-                column_metadata=metadata,
-                chunk_size=load["chunk_size"],
-            )
+            if source_row_count == 0:
+                loaded_rows = 0
+                print_step("Source table is empty; skipping data load")
+            else:
+                loaded_rows = source_adapter.load_table(
+                    source_conn=source_conn,
+                    sf_conn=sf_conn,
+                    source_config=source,
+                    target_config=target,
+                    source_table=source_table,
+                    target_table=target_table,
+                    column_metadata=metadata,
+                    chunk_size=load["chunk_size"],
+                )
 
             elapsed = perf_counter() - table_start
 
@@ -149,6 +153,7 @@ def main() -> None:
 
             row_count_match = source_row_count == loaded_rows == target_row_count
             loaded_at = datetime.now(UTC)
+            load_status = "LOADED" if source_row_count > 0 else "EMPTY"
 
             table_catalog_rows.append(
                 {
@@ -163,7 +168,7 @@ def main() -> None:
                     "SOURCE_ROW_COUNT": source_row_count,
                     "TARGET_ROW_COUNT": target_row_count,
                     "ROW_COUNT_MATCH": row_count_match,
-                    "LOAD_STATUS": "LOADED",
+                    "LOAD_STATUS": load_status,
                     "LOAD_SECONDS": elapsed,
                     "LOADED_AT": loaded_at,
                 }
