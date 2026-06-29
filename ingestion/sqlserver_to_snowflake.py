@@ -11,6 +11,16 @@ from connectors.snowflake import get_snowflake_connection
 from datetime import datetime, UTC
 
 from snowflake.connector.pandas_tools import write_pandas
+from loaders.sqlserver_loader import load_sqlserver_table_to_snowflake
+from metadata.sqlserver_metadata import get_column_metadata, get_source_tables
+
+
+from ddl.snowflake_ddl import (
+    clean_identifier,
+    execute_ddl,
+    generate_create_table_sql,
+    sqlserver_to_snowflake_type,
+)
 
 load_dotenv()
 
@@ -30,48 +40,48 @@ SNOWFLAKE_RESERVED_WORDS = {
 }
 
 
-def clean_identifier(name: str) -> str:
-    name = str(name).upper()
-    name = re.sub(r"[^A-Z0-9_]", "_", name)
-    name = re.sub(r"_+", "_", name).strip("_")
+# def clean_identifier(name: str) -> str:
+#     name = str(name).upper()
+#     name = re.sub(r"[^A-Z0-9_]", "_", name)
+#     name = re.sub(r"_+", "_", name).strip("_")
 
-    if not name:
-        name = "UNNAMED_COL"
+#     if not name:
+#         name = "UNNAMED_COL"
 
-    if name[0].isdigit():
-        name = f"COL_{name}"
+#     if name[0].isdigit():
+#         name = f"COL_{name}"
 
-    if name in SNOWFLAKE_RESERVED_WORDS:
-        name = f"{name}_COL"
+#     if name in SNOWFLAKE_RESERVED_WORDS:
+#         name = f"{name}_COL"
 
-    return name
+#     return name
 
-def normalize_chunk_for_load(chunk: pd.DataFrame, column_metadata: pd.DataFrame) -> pd.DataFrame:
-    rename_map = dict(
-        zip(column_metadata["COLUMN_NAME"], column_metadata["SNOWFLAKE_COLUMN_NAME"])
-    )
-    type_map = dict(
-        zip(column_metadata["SNOWFLAKE_COLUMN_NAME"], column_metadata["SNOWFLAKE_DATA_TYPE"])
-    )
+# def normalize_chunk_for_load(chunk: pd.DataFrame, column_metadata: pd.DataFrame) -> pd.DataFrame:
+#     rename_map = dict(
+#         zip(column_metadata["COLUMN_NAME"], column_metadata["SNOWFLAKE_COLUMN_NAME"])
+#     )
+#     type_map = dict(
+#         zip(column_metadata["SNOWFLAKE_COLUMN_NAME"], column_metadata["SNOWFLAKE_DATA_TYPE"])
+#     )
 
-    chunk = chunk.rename(columns=rename_map)
+#     chunk = chunk.rename(columns=rename_map)
 
-    for col in chunk.columns:
-        sf_type = type_map.get(col, "VARCHAR")
+#     for col in chunk.columns:
+#         sf_type = type_map.get(col, "VARCHAR")
 
-        if sf_type.startswith("TIMESTAMP"):
-            chunk[col] = pd.to_datetime(chunk[col], errors="coerce")
-        elif sf_type == "DATE":
-            chunk[col] = pd.to_datetime(chunk[col], errors="coerce").dt.date
-        elif sf_type == "BOOLEAN":
-            chunk[col] = chunk[col].astype("boolean")
-        elif sf_type.startswith("NUMBER") or sf_type == "FLOAT":
-            chunk[col] = pd.to_numeric(chunk[col], errors="coerce")
-        else:
-            chunk[col] = chunk[col].astype("string")
-            chunk[col] = chunk[col].replace(r"^\s*$", pd.NA, regex=True)
+#         if sf_type.startswith("TIMESTAMP"):
+#             chunk[col] = pd.to_datetime(chunk[col], errors="coerce")
+#         elif sf_type == "DATE":
+#             chunk[col] = pd.to_datetime(chunk[col], errors="coerce").dt.date
+#         elif sf_type == "BOOLEAN":
+#             chunk[col] = chunk[col].astype("boolean")
+#         elif sf_type.startswith("NUMBER") or sf_type == "FLOAT":
+#             chunk[col] = pd.to_numeric(chunk[col], errors="coerce")
+#         else:
+#             chunk[col] = chunk[col].astype("string")
+#             chunk[col] = chunk[col].replace(r"^\s*$", pd.NA, regex=True)
 
-    return chunk
+#     return chunk
 
 
 def load_sqlserver_table_to_snowflake(
@@ -119,124 +129,124 @@ def load_sqlserver_table_to_snowflake(
 
     return total_loaded
 
-def sqlserver_to_snowflake_type(row) -> str:
-    data_type = str(row["DATA_TYPE"]).lower()
-    max_len = row["CHARACTER_MAXIMUM_LENGTH"]
-    precision = row["NUMERIC_PRECISION"]
-    scale = row["NUMERIC_SCALE"]
+# def sqlserver_to_snowflake_type(row) -> str:
+#     data_type = str(row["DATA_TYPE"]).lower()
+#     max_len = row["CHARACTER_MAXIMUM_LENGTH"]
+#     precision = row["NUMERIC_PRECISION"]
+#     scale = row["NUMERIC_SCALE"]
 
-    if data_type in {"bigint", "int", "smallint", "tinyint"}:
-        return "NUMBER(38,0)"
+#     if data_type in {"bigint", "int", "smallint", "tinyint"}:
+#         return "NUMBER(38,0)"
 
-    if data_type == "bit":
-        return "BOOLEAN"
+#     if data_type == "bit":
+#         return "BOOLEAN"
 
-    if data_type in {"decimal", "numeric", "money", "smallmoney"}:
-        p = int(precision) if pd.notna(precision) else 38
-        s = int(scale) if pd.notna(scale) else 4
-        return f"NUMBER({min(p, 38)},{s})"
+#     if data_type in {"decimal", "numeric", "money", "smallmoney"}:
+#         p = int(precision) if pd.notna(precision) else 38
+#         s = int(scale) if pd.notna(scale) else 4
+#         return f"NUMBER({min(p, 38)},{s})"
 
-    if data_type in {"float", "real"}:
-        return "FLOAT"
+#     if data_type in {"float", "real"}:
+#         return "FLOAT"
 
-    if data_type == "date":
-        return "DATE"
+#     if data_type == "date":
+#         return "DATE"
 
-    if data_type in {"datetime", "datetime2", "smalldatetime"}:
-        return "TIMESTAMP_NTZ"
+#     if data_type in {"datetime", "datetime2", "smalldatetime"}:
+#         return "TIMESTAMP_NTZ"
 
-    if data_type == "datetimeoffset":
-        return "TIMESTAMP_TZ"
+#     if data_type == "datetimeoffset":
+#         return "TIMESTAMP_TZ"
 
-    if data_type == "time":
-        return "TIME"
+#     if data_type == "time":
+#         return "TIME"
 
-    if data_type == "uniqueidentifier":
-        return "VARCHAR(36)"
+#     if data_type == "uniqueidentifier":
+#         return "VARCHAR(36)"
 
-    if data_type in {"binary", "varbinary", "image"}:
-        return "BINARY"
+#     if data_type in {"binary", "varbinary", "image"}:
+#         return "BINARY"
 
-    if data_type in {"varchar", "nvarchar", "char", "nchar", "text", "ntext", "xml"}:
-        if pd.isna(max_len) or int(max_len) < 0:
-            return "VARCHAR"
-        return f"VARCHAR({min(int(max_len), 16777216)})"
+#     if data_type in {"varchar", "nvarchar", "char", "nchar", "text", "ntext", "xml"}:
+#         if pd.isna(max_len) or int(max_len) < 0:
+#             return "VARCHAR"
+#         return f"VARCHAR({min(int(max_len), 16777216)})"
 
-    return "VARCHAR"
-
-
-def get_column_metadata(sql_conn, source_schema: str, table_name: str) -> pd.DataFrame:
-    query = """
-        SELECT
-            TABLE_SCHEMA,
-            TABLE_NAME,
-            COLUMN_NAME,
-            ORDINAL_POSITION,
-            DATA_TYPE,
-            CHARACTER_MAXIMUM_LENGTH,
-            NUMERIC_PRECISION,
-            NUMERIC_SCALE,
-            IS_NULLABLE
-        FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = ?
-          AND TABLE_NAME = ?
-        ORDER BY ORDINAL_POSITION;
-    """
-
-    df = pd.read_sql(query, sql_conn, params=[source_schema, table_name])
-    df["SNOWFLAKE_COLUMN_NAME"] = df["COLUMN_NAME"].apply(clean_identifier)
-    df["SNOWFLAKE_DATA_TYPE"] = df.apply(sqlserver_to_snowflake_type, axis=1)
-
-    return df
+#     return "VARCHAR"
 
 
-def generate_create_table_sql(
-    target_database: str,
-    target_schema: str,
-    target_table: str,
-    column_metadata: pd.DataFrame,
-) -> str:
-    column_defs = []
+# def get_column_metadata(sql_conn, source_schema: str, table_name: str) -> pd.DataFrame:
+#     query = """
+#         SELECT
+#             TABLE_SCHEMA,
+#             TABLE_NAME,
+#             COLUMN_NAME,
+#             ORDINAL_POSITION,
+#             DATA_TYPE,
+#             CHARACTER_MAXIMUM_LENGTH,
+#             NUMERIC_PRECISION,
+#             NUMERIC_SCALE,
+#             IS_NULLABLE
+#         FROM INFORMATION_SCHEMA.COLUMNS
+#         WHERE TABLE_SCHEMA = ?
+#           AND TABLE_NAME = ?
+#         ORDER BY ORDINAL_POSITION;
+#     """
 
-    for _, row in column_metadata.iterrows():
-        col_name = row["SNOWFLAKE_COLUMN_NAME"]
-        col_type = row["SNOWFLAKE_DATA_TYPE"]
-        column_defs.append(f'"{col_name}" {col_type}')
+#     df = pd.read_sql(query, sql_conn, params=[source_schema, table_name])
+#     df["SNOWFLAKE_COLUMN_NAME"] = df["COLUMN_NAME"].apply(clean_identifier)
+#     df["SNOWFLAKE_DATA_TYPE"] = df.apply(sqlserver_to_snowflake_type, axis=1)
 
-    lineage_cols = [
-        '"_SOURCE_SYSTEM" VARCHAR',
-        '"_SOURCE_DATABASE" VARCHAR',
-        '"_SOURCE_SCHEMA" VARCHAR',
-        '"_SOURCE_TABLE" VARCHAR',
-        '"_INGESTED_AT" TIMESTAMP_TZ',
-    ]
+#     return df
 
-    all_cols = column_defs + lineage_cols
 
-    return f"""
-CREATE OR REPLACE TABLE {target_database}.{target_schema}.{target_table} (
-    {", ".join(all_cols)}
-);
-""".strip()
+# def generate_create_table_sql(
+#     target_database: str,
+#     target_schema: str,
+#     target_table: str,
+#     column_metadata: pd.DataFrame,
+# ) -> str:
+#     column_defs = []
 
-def execute_ddl(sf_conn, ddl: str) -> None:
-    with sf_conn.cursor() as cur:
-        cur.execute(ddl)
+#     for _, row in column_metadata.iterrows():
+#         col_name = row["SNOWFLAKE_COLUMN_NAME"]
+#         col_type = row["SNOWFLAKE_DATA_TYPE"]
+#         column_defs.append(f'"{col_name}" {col_type}')
 
-def get_source_tables(sql_conn, source_schema: str, include_tables: list[str]) -> list[str]:
-    if include_tables:
-        return include_tables
+#     lineage_cols = [
+#         '"_SOURCE_SYSTEM" VARCHAR',
+#         '"_SOURCE_DATABASE" VARCHAR',
+#         '"_SOURCE_SCHEMA" VARCHAR',
+#         '"_SOURCE_TABLE" VARCHAR',
+#         '"_INGESTED_AT" TIMESTAMP_TZ',
+#     ]
 
-    query = """
-        SELECT TABLE_NAME
-        FROM INFORMATION_SCHEMA.TABLES
-        WHERE TABLE_SCHEMA = ?
-          AND TABLE_TYPE = 'BASE TABLE'
-        ORDER BY TABLE_NAME;
-    """
+#     all_cols = column_defs + lineage_cols
 
-    df = pd.read_sql(query, sql_conn, params=[source_schema])
-    return df["TABLE_NAME"].tolist()
+#     return f"""
+# CREATE OR REPLACE TABLE {target_database}.{target_schema}.{target_table} (
+#     {", ".join(all_cols)}
+# );
+# """.strip()
+
+# def execute_ddl(sf_conn, ddl: str) -> None:
+#     with sf_conn.cursor() as cur:
+#         cur.execute(ddl)
+
+# def get_source_tables(sql_conn, source_schema: str, include_tables: list[str]) -> list[str]:
+#     if include_tables:
+#         return include_tables
+
+#     query = """
+#         SELECT TABLE_NAME
+#         FROM INFORMATION_SCHEMA.TABLES
+#         WHERE TABLE_SCHEMA = ?
+#           AND TABLE_TYPE = 'BASE TABLE'
+#         ORDER BY TABLE_NAME;
+#     """
+
+#     df = pd.read_sql(query, sql_conn, params=[source_schema])
+#     return df["TABLE_NAME"].tolist()
 
 
 def main() -> None:
@@ -281,10 +291,12 @@ def main() -> None:
         sample_target_table = f"{clean_identifier(sample_table)}{target['table_suffix']}"
 
         metadata = get_column_metadata(
-            sql_conn=sql_conn,
-            source_schema=source["schema"],
-            table_name=sample_table,
-        )
+        sql_conn=sql_conn,
+        source_schema=source["schema"],
+        table_name=sample_table,
+        clean_identifier=clean_identifier,
+        type_mapper=sqlserver_to_snowflake_type,
+    )
 
         print(f"\nSample metadata for {sample_table}:")
         print(
