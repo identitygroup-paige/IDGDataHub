@@ -6,7 +6,11 @@ import yaml
 from dotenv import load_dotenv
 
 from connectors.snowflake import get_snowflake_connection
-from ddl.snowflake_ddl import execute_ddl, generate_create_table_sql
+from ddl.snowflake_ddl import (
+    execute_ddl,
+    generate_create_table_if_not_exists_sql,
+    generate_create_table_sql,
+)
 from loaders.snowflake_merge import build_merge_sql, execute_merge
 from metadata.ingestion_metadata import (
     finish_run_log,
@@ -71,12 +75,7 @@ def build_load_plan(
     raise ValueError(f"Unknown load mode: {load_mode}")
 
 
-def validate_row_counts(
-    load_plan: dict,
-    source_row_count: int,
-    loaded_rows: int,
-    target_row_count: int,
-):
+def validate_row_counts(load_plan, source_row_count, loaded_rows, target_row_count):
     if load_plan["strategy"] == "full_refresh":
         row_count_match = source_row_count == loaded_rows == target_row_count
         validation_value = (
@@ -109,12 +108,8 @@ def main() -> None:
     metadata_config = config["metadata"]
 
     load_mode = load["mode"]
-
-    planning_config = config.get("planning", {})
-    planning_enabled = planning_config.get("enabled", False)
-
-    incremental_config = config.get("incremental", {})
-    incremental_tables = incremental_config.get("tables", {})
+    planning_enabled = config.get("planning", {}).get("enabled", False)
+    incremental_tables = config.get("incremental", {}).get("tables", {})
 
     source_adapter = get_source_adapter(source["type"])
 
@@ -161,7 +156,6 @@ def main() -> None:
             source_config=source,
             load_config=load,
         )
-
         print_step(f"Found {len(tables)} source table(s)")
 
         for source_table in tables:
@@ -177,22 +171,6 @@ def main() -> None:
                 table_name=source_table,
             )
             print_step(f"Metadata discovered ({len(metadata)} columns)")
-
-            target_ddl = generate_create_table_sql(
-                target_database=target["database"],
-                target_schema=target["schema"],
-                target_table=target_table,
-                column_metadata=metadata,
-            )
-            execute_ddl(sf_conn, target_ddl)
-            print_step("Snowflake target table created/replaced")
-
-            source_row_count = source_adapter.get_row_count(
-                source_conn=source_conn,
-                source_config=source,
-                table_name=source_table,
-            )
-            print_step(f"Source row count: {source_row_count:,}")
 
             incremental_table_config = incremental_tables.get(source_table)
             primary_key = (
@@ -226,7 +204,6 @@ def main() -> None:
                         watermark_column=watermark_column,
                         watermark_value=existing_watermark,
                     )
-
                     print_step(
                         f"Planning mode: {source_table} would load "
                         f"{planned_incremental_rows:,} incremental row(s) "
@@ -242,15 +219,39 @@ def main() -> None:
                 watermark_column=watermark_column,
                 existing_watermark=existing_watermark,
             )
-
             print_step(f"Load strategy selected: {load_plan['strategy']}")
+
+            if load_plan["strategy"] == "full_refresh":
+                target_ddl = generate_create_table_sql(
+                    target_database=target["database"],
+                    target_schema=target["schema"],
+                    target_table=target_table,
+                    column_metadata=metadata,
+                )
+                execute_ddl(sf_conn, target_ddl)
+                print_step("Snowflake target table created/replaced")
+            else:
+                target_ddl = generate_create_table_if_not_exists_sql(
+                    target_database=target["database"],
+                    target_schema=target["schema"],
+                    target_table=target_table,
+                    column_metadata=metadata,
+                )
+                execute_ddl(sf_conn, target_ddl)
+                print_step("Snowflake target table verified/created if missing")
+
+            source_row_count = source_adapter.get_row_count(
+                source_conn=source_conn,
+                source_config=source,
+                table_name=source_table,
+            )
+            print_step(f"Source row count: {source_row_count:,}")
 
             use_merge = (
                 load_mode == "incremental"
                 and load_plan["strategy"] != "full_refresh"
                 and bool(primary_key)
             )
-
             load_target_table = stage_table if use_merge else target_table
 
             if use_merge:
@@ -300,7 +301,7 @@ def main() -> None:
                 sf_conn=sf_conn,
                 target_database=target["database"],
                 target_schema=target["schema"],
-                target_table=load_target_table if load_mode == "incremental_plan" else target_table,
+                target_table=target_table,
             )
 
             if load_mode == "incremental_plan" and load_plan["strategy"] != "full_refresh":

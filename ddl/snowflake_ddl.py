@@ -72,6 +72,21 @@ def sqlserver_to_snowflake_type(row) -> str:
 
     return "VARCHAR"
 
+def generate_create_table_if_not_exists_sql(
+    target_database: str,
+    target_schema: str,
+    target_table: str,
+    column_metadata,
+) -> str:
+    ddl = generate_create_table_sql(
+        target_database=target_database,
+        target_schema=target_schema,
+        target_table=target_table,
+        column_metadata=column_metadata,
+    )
+
+    return ddl.replace("CREATE OR REPLACE TABLE", "CREATE TABLE IF NOT EXISTS")
+
 
 def generate_create_table_sql(
     target_database: str,

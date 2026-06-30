@@ -11,16 +11,18 @@ target:
   table_suffix: _ENDEAV
 
 load:
-  mode: incremental
-  chunk_size: 50000
+  mode: full_refresh
+  chunk_size: 10000
   include_tables:
-    - __EFMigrationsHistory
-    - Actions
-    - Appointments
+    - Forecast_Snapshot
+    - Forecast_StepDays
+    - Forecast_StepHitRates
+    - Forecast_TaskDays
+    - Forecast_TaskDaysByProjectType
+    # continue with the remaining tables after Forecast_Snapshot
   exclude_empty_tables: true
-
 planning:
-  enabled: true
+  enabled: false
 
 incremental:
   enabled: true
