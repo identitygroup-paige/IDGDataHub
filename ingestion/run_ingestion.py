@@ -43,6 +43,10 @@ def print_step(message: str) -> None:
     print(f"✓ {message}")
 
 
+def print_error(message: str) -> None:
+    print(f"✗ {message}")
+
+
 def build_load_plan(
     source_adapter,
     source: dict,
@@ -92,6 +96,72 @@ def validate_row_counts(load_plan, source_row_count, loaded_rows, target_row_cou
         )
 
     return row_count_match, validation_value
+
+
+def append_failed_table_result(
+    table_catalog_rows,
+    validation_rows,
+    table_results,
+    run_id,
+    source,
+    target,
+    source_table,
+    target_table,
+    table_start,
+    table_error,
+):
+    elapsed = perf_counter() - table_start
+    failed_at = datetime.now(UTC)
+    error_message = str(table_error)
+
+    print_error(f"Failed {source_table}: {error_message}")
+
+    table_catalog_rows.append(
+        {
+            "RUN_ID": run_id,
+            "SOURCE_SYSTEM": source["name"],
+            "SOURCE_DATABASE": source["database"],
+            "SOURCE_SCHEMA": source["schema"],
+            "SOURCE_TABLE": source_table,
+            "TARGET_DATABASE": target["database"],
+            "TARGET_SCHEMA": target["schema"],
+            "TARGET_TABLE": target_table,
+            "SOURCE_ROW_COUNT": None,
+            "TARGET_ROW_COUNT": None,
+            "ROW_COUNT_MATCH": False,
+            "LOAD_STATUS": "FAILED",
+            "LOAD_SECONDS": elapsed,
+            "LOADED_AT": failed_at,
+        }
+    )
+
+    validation_rows.append(
+        {
+            "RUN_ID": run_id,
+            "SOURCE_SYSTEM": source["name"],
+            "TARGET_DATABASE": target["database"],
+            "TARGET_SCHEMA": target["schema"],
+            "TARGET_TABLE": target_table,
+            "VALIDATION_NAME": "TABLE_LOAD_ERROR",
+            "VALIDATION_STATUS": "FAIL",
+            "VALIDATION_VALUE": error_message[:500],
+            "VALIDATED_AT": failed_at,
+        }
+    )
+
+    table_results.append(
+        (
+            source_table,
+            target_table,
+            0,
+            0,
+            0,
+            elapsed,
+            False,
+            "error",
+            "FAILED",
+        )
+    )
 
 
 def main() -> None:
@@ -163,267 +233,304 @@ def main() -> None:
             target_table = source_adapter.get_target_table_name(source_table, target)
             stage_table = f"{target_table}_STG"
 
-            print_header(f"Loading {source['schema']}.{source_table} → {target_table}")
-
-            metadata = source_adapter.get_metadata(
-                source_conn=source_conn,
-                source_config=source,
-                table_name=source_table,
-            )
-            print_step(f"Metadata discovered ({len(metadata)} columns)")
-
-            incremental_table_config = incremental_tables.get(source_table)
-            primary_key = (
-                incremental_table_config.get("primary_key", [])
-                if incremental_table_config
-                else []
-            )
-            watermark_column = None
-            existing_watermark = None
-            planned_incremental_rows = None
-
-            if incremental_table_config:
-                watermark_column = incremental_table_config["watermark_column"]
-
-                existing_watermark = get_watermark(
-                    sf_conn=sf_conn,
-                    source_config=source,
-                    target_config=target,
-                    source_table=source_table,
-                    target_table=target_table,
-                    watermark_column=watermark_column,
-                    metadata_database=metadata_config["database"],
-                    metadata_schema=metadata_config["schema"],
+            try:
+                print_header(
+                    f"Loading {source['schema']}.{source_table} → {target_table}"
                 )
 
-                if planning_enabled:
-                    planned_incremental_rows = source_adapter.get_incremental_row_count(
-                        source_conn=source_conn,
-                        source_config=source,
-                        table_name=source_table,
-                        watermark_column=watermark_column,
-                        watermark_value=existing_watermark,
-                    )
-                    print_step(
-                        f"Planning mode: {source_table} would load "
-                        f"{planned_incremental_rows:,} incremental row(s) "
-                        f"using {watermark_column} > {existing_watermark}"
-                    )
-
-            load_plan = build_load_plan(
-                source_adapter=source_adapter,
-                source=source,
-                load_mode=load_mode,
-                source_table=source_table,
-                incremental_table_config=incremental_table_config,
-                watermark_column=watermark_column,
-                existing_watermark=existing_watermark,
-            )
-            print_step(f"Load strategy selected: {load_plan['strategy']}")
-
-            if load_plan["strategy"] == "full_refresh":
-                target_ddl = generate_create_table_sql(
-                    target_database=target["database"],
-                    target_schema=target["schema"],
-                    target_table=target_table,
-                    column_metadata=metadata,
-                )
-                execute_ddl(sf_conn, target_ddl)
-                print_step("Snowflake target table created/replaced")
-            else:
-                target_ddl = generate_create_table_if_not_exists_sql(
-                    target_database=target["database"],
-                    target_schema=target["schema"],
-                    target_table=target_table,
-                    column_metadata=metadata,
-                )
-                execute_ddl(sf_conn, target_ddl)
-                print_step("Snowflake target table verified/created if missing")
-
-            source_row_count = source_adapter.get_row_count(
-                source_conn=source_conn,
-                source_config=source,
-                table_name=source_table,
-            )
-            print_step(f"Source row count: {source_row_count:,}")
-
-            use_merge = (
-                load_mode == "incremental"
-                and load_plan["strategy"] != "full_refresh"
-                and bool(primary_key)
-            )
-            load_target_table = stage_table if use_merge else target_table
-
-            if use_merge:
-                stage_ddl = generate_create_table_sql(
-                    target_database=target["database"],
-                    target_schema=target["schema"],
-                    target_table=stage_table,
-                    column_metadata=metadata,
-                )
-                execute_ddl(sf_conn, stage_ddl)
-                print_step(f"Snowflake stage table created/replaced: {stage_table}")
-
-            if load_mode == "incremental_plan" and load_plan["strategy"] != "full_refresh":
-                loaded_rows = 0
-                print_step("Incremental plan mode: skipping table load")
-            elif source_row_count == 0:
-                loaded_rows = 0
-                print_step("Source table is empty; skipping data load")
-            else:
-                loaded_rows = source_adapter.load_table(
-                    source_conn=source_conn,
-                    sf_conn=sf_conn,
-                    source_config=source,
-                    target_config=target,
-                    source_table=source_table,
-                    target_table=load_target_table,
-                    column_metadata=metadata,
-                    chunk_size=load["chunk_size"],
-                    load_plan=load_plan,
-                )
-
-            if use_merge and loaded_rows > 0:
-                merge_sql = build_merge_sql(
-                    target_database=target["database"],
-                    target_schema=target["schema"],
-                    target_table=target_table,
-                    stage_table=stage_table,
-                    column_metadata=metadata,
-                    primary_key=primary_key,
-                )
-                execute_merge(sf_conn, merge_sql)
-                print_step(f"Merged {stage_table} into {target_table} using {primary_key}")
-
-            elapsed = perf_counter() - table_start
-
-            target_row_count = get_snowflake_row_count(
-                sf_conn=sf_conn,
-                target_database=target["database"],
-                target_schema=target["schema"],
-                target_table=target_table,
-            )
-
-            if load_mode == "incremental_plan" and load_plan["strategy"] != "full_refresh":
-                row_count_match = True
-                validation_value = (
-                    f"incremental_plan_only=true; "
-                    f"source_total={source_row_count}; "
-                    f"planned_rows_not_loaded={planned_incremental_rows}"
-                )
-            else:
-                row_count_match, validation_value = validate_row_counts(
-                    load_plan=load_plan,
-                    source_row_count=source_row_count,
-                    loaded_rows=loaded_rows,
-                    target_row_count=target_row_count,
-                )
-
-            loaded_at = datetime.now(UTC)
-            load_status = "PLANNED" if (
-                load_mode == "incremental_plan" and load_plan["strategy"] != "full_refresh"
-            ) else ("MERGED" if use_merge else ("LOADED" if source_row_count > 0 else "EMPTY"))
-
-            if incremental_table_config and load_mode != "incremental_plan":
-                max_watermark = source_adapter.get_max_watermark(
+                metadata = source_adapter.get_metadata(
                     source_conn=source_conn,
                     source_config=source,
                     table_name=source_table,
-                    watermark_column=watermark_column,
                 )
+                print_step(f"Metadata discovered ({len(metadata)} columns)")
 
-                if max_watermark is not None:
-                    update_watermark(
+                incremental_table_config = incremental_tables.get(source_table)
+                primary_key = (
+                    incremental_table_config.get("primary_key", [])
+                    if incremental_table_config
+                    else []
+                )
+                watermark_column = None
+                existing_watermark = None
+                planned_incremental_rows = None
+
+                if incremental_table_config:
+                    watermark_column = incremental_table_config["watermark_column"]
+
+                    existing_watermark = get_watermark(
                         sf_conn=sf_conn,
                         source_config=source,
                         target_config=target,
                         source_table=source_table,
                         target_table=target_table,
                         watermark_column=watermark_column,
-                        watermark_value=max_watermark,
-                        run_id=run_id,
                         metadata_database=metadata_config["database"],
                         metadata_schema=metadata_config["schema"],
                     )
-                    print_step(f"Watermark updated: {watermark_column} = {max_watermark}")
 
-            table_catalog_rows.append(
-                {
-                    "RUN_ID": run_id,
-                    "SOURCE_SYSTEM": source["name"],
-                    "SOURCE_DATABASE": source["database"],
-                    "SOURCE_SCHEMA": source["schema"],
-                    "SOURCE_TABLE": source_table,
-                    "TARGET_DATABASE": target["database"],
-                    "TARGET_SCHEMA": target["schema"],
-                    "TARGET_TABLE": target_table,
-                    "SOURCE_ROW_COUNT": source_row_count,
-                    "TARGET_ROW_COUNT": target_row_count,
-                    "ROW_COUNT_MATCH": row_count_match,
-                    "LOAD_STATUS": load_status,
-                    "LOAD_SECONDS": elapsed,
-                    "LOADED_AT": loaded_at,
-                }
-            )
+                    if planning_enabled:
+                        planned_incremental_rows = (
+                            source_adapter.get_incremental_row_count(
+                                source_conn=source_conn,
+                                source_config=source,
+                                table_name=source_table,
+                                watermark_column=watermark_column,
+                                watermark_value=existing_watermark,
+                            )
+                        )
+                        print_step(
+                            f"Planning mode: {source_table} would load "
+                            f"{planned_incremental_rows:,} incremental row(s) "
+                            f"using {watermark_column} > {existing_watermark}"
+                        )
 
-            validation_rows.append(
-                {
-                    "RUN_ID": run_id,
-                    "SOURCE_SYSTEM": source["name"],
-                    "TARGET_DATABASE": target["database"],
-                    "TARGET_SCHEMA": target["schema"],
-                    "TARGET_TABLE": target_table,
-                    "VALIDATION_NAME": "SOURCE_LOADED_TARGET_ROW_COUNT_MATCH",
-                    "VALIDATION_STATUS": "PASS" if row_count_match else "FAIL",
-                    "VALIDATION_VALUE": validation_value,
-                    "VALIDATED_AT": loaded_at,
-                }
-            )
+                load_plan = build_load_plan(
+                    source_adapter=source_adapter,
+                    source=source,
+                    load_mode=load_mode,
+                    source_table=source_table,
+                    incremental_table_config=incremental_table_config,
+                    watermark_column=watermark_column,
+                    existing_watermark=existing_watermark,
+                )
+                print_step(f"Load strategy selected: {load_plan['strategy']}")
 
-            for _, row in metadata.iterrows():
-                column_catalog_rows.append(
+                if load_plan["strategy"] == "full_refresh":
+                    target_ddl = generate_create_table_sql(
+                        target_database=target["database"],
+                        target_schema=target["schema"],
+                        target_table=target_table,
+                        column_metadata=metadata,
+                    )
+                    execute_ddl(sf_conn, target_ddl)
+                    print_step("Snowflake target table created/replaced")
+                else:
+                    target_ddl = generate_create_table_if_not_exists_sql(
+                        target_database=target["database"],
+                        target_schema=target["schema"],
+                        target_table=target_table,
+                        column_metadata=metadata,
+                    )
+                    execute_ddl(sf_conn, target_ddl)
+                    print_step("Snowflake target table verified/created if missing")
+
+                source_row_count = source_adapter.get_row_count(
+                    source_conn=source_conn,
+                    source_config=source,
+                    table_name=source_table,
+                )
+                print_step(f"Source row count: {source_row_count:,}")
+
+                use_merge = (
+                    load_mode == "incremental"
+                    and load_plan["strategy"] != "full_refresh"
+                    and bool(primary_key)
+                )
+                load_target_table = stage_table if use_merge else target_table
+
+                if use_merge:
+                    stage_ddl = generate_create_table_sql(
+                        target_database=target["database"],
+                        target_schema=target["schema"],
+                        target_table=stage_table,
+                        column_metadata=metadata,
+                    )
+                    execute_ddl(sf_conn, stage_ddl)
+                    print_step(f"Snowflake stage table created/replaced: {stage_table}")
+
+                if (
+                    load_mode == "incremental_plan"
+                    and load_plan["strategy"] != "full_refresh"
+                ):
+                    loaded_rows = 0
+                    print_step("Incremental plan mode: skipping table load")
+                elif source_row_count == 0:
+                    loaded_rows = 0
+                    print_step("Source table is empty; skipping data load")
+                else:
+                    loaded_rows = source_adapter.load_table(
+                        source_conn=source_conn,
+                        sf_conn=sf_conn,
+                        source_config=source,
+                        target_config=target,
+                        source_table=source_table,
+                        target_table=load_target_table,
+                        column_metadata=metadata,
+                        chunk_size=load["chunk_size"],
+                        load_plan=load_plan,
+                    )
+
+                if use_merge and loaded_rows > 0:
+                    merge_sql = build_merge_sql(
+                        target_database=target["database"],
+                        target_schema=target["schema"],
+                        target_table=target_table,
+                        stage_table=stage_table,
+                        column_metadata=metadata,
+                        primary_key=primary_key,
+                    )
+                    execute_merge(sf_conn, merge_sql)
+                    print_step(
+                        f"Merged {stage_table} into {target_table} using {primary_key}"
+                    )
+
+                elapsed = perf_counter() - table_start
+
+                target_row_count = get_snowflake_row_count(
+                    sf_conn=sf_conn,
+                    target_database=target["database"],
+                    target_schema=target["schema"],
+                    target_table=target_table,
+                )
+
+                if (
+                    load_mode == "incremental_plan"
+                    and load_plan["strategy"] != "full_refresh"
+                ):
+                    row_count_match = True
+                    validation_value = (
+                        f"incremental_plan_only=true; "
+                        f"source_total={source_row_count}; "
+                        f"planned_rows_not_loaded={planned_incremental_rows}"
+                    )
+                else:
+                    row_count_match, validation_value = validate_row_counts(
+                        load_plan=load_plan,
+                        source_row_count=source_row_count,
+                        loaded_rows=loaded_rows,
+                        target_row_count=target_row_count,
+                    )
+
+                loaded_at = datetime.now(UTC)
+                load_status = "PLANNED" if (
+                    load_mode == "incremental_plan"
+                    and load_plan["strategy"] != "full_refresh"
+                ) else (
+                    "MERGED"
+                    if use_merge
+                    else ("LOADED" if source_row_count > 0 else "EMPTY")
+                )
+
+                if incremental_table_config and load_mode != "incremental_plan":
+                    max_watermark = source_adapter.get_max_watermark(
+                        source_conn=source_conn,
+                        source_config=source,
+                        table_name=source_table,
+                        watermark_column=watermark_column,
+                    )
+
+                    if max_watermark is not None:
+                        update_watermark(
+                            sf_conn=sf_conn,
+                            source_config=source,
+                            target_config=target,
+                            source_table=source_table,
+                            target_table=target_table,
+                            watermark_column=watermark_column,
+                            watermark_value=max_watermark,
+                            run_id=run_id,
+                            metadata_database=metadata_config["database"],
+                            metadata_schema=metadata_config["schema"],
+                        )
+                        print_step(
+                            f"Watermark updated: {watermark_column} = {max_watermark}"
+                        )
+
+                table_catalog_rows.append(
                     {
                         "RUN_ID": run_id,
                         "SOURCE_SYSTEM": source["name"],
                         "SOURCE_DATABASE": source["database"],
                         "SOURCE_SCHEMA": source["schema"],
                         "SOURCE_TABLE": source_table,
-                        "SOURCE_COLUMN": row["COLUMN_NAME"],
-                        "SOURCE_ORDINAL_POSITION": row["ORDINAL_POSITION"],
-                        "SOURCE_DATA_TYPE": row["DATA_TYPE"],
-                        "SOURCE_CHARACTER_MAXIMUM_LENGTH": row["CHARACTER_MAXIMUM_LENGTH"],
-                        "SOURCE_NUMERIC_PRECISION": row["NUMERIC_PRECISION"],
-                        "SOURCE_NUMERIC_SCALE": row["NUMERIC_SCALE"],
-                        "SOURCE_IS_NULLABLE": row["IS_NULLABLE"],
                         "TARGET_DATABASE": target["database"],
                         "TARGET_SCHEMA": target["schema"],
                         "TARGET_TABLE": target_table,
-                        "TARGET_COLUMN": row["SNOWFLAKE_COLUMN_NAME"],
-                        "TARGET_DATA_TYPE": row["SNOWFLAKE_DATA_TYPE"],
-                        "CATALOGED_AT": loaded_at,
+                        "SOURCE_ROW_COUNT": source_row_count,
+                        "TARGET_ROW_COUNT": target_row_count,
+                        "ROW_COUNT_MATCH": row_count_match,
+                        "LOAD_STATUS": load_status,
+                        "LOAD_SECONDS": elapsed,
+                        "LOADED_AT": loaded_at,
                     }
                 )
 
-            table_results.append(
-                (
-                    source_table,
-                    target_table,
-                    source_row_count,
-                    loaded_rows,
-                    target_row_count,
-                    elapsed,
-                    row_count_match,
-                    load_plan["strategy"],
-                    load_status,
+                validation_rows.append(
+                    {
+                        "RUN_ID": run_id,
+                        "SOURCE_SYSTEM": source["name"],
+                        "TARGET_DATABASE": target["database"],
+                        "TARGET_SCHEMA": target["schema"],
+                        "TARGET_TABLE": target_table,
+                        "VALIDATION_NAME": "SOURCE_LOADED_TARGET_ROW_COUNT_MATCH",
+                        "VALIDATION_STATUS": "PASS" if row_count_match else "FAIL",
+                        "VALIDATION_VALUE": validation_value,
+                        "VALIDATED_AT": loaded_at,
+                    }
                 )
-            )
 
-            print_step(f"Loaded {loaded_rows:,} rows in {elapsed:,.1f} seconds")
-            print_step(
-                f"Validation {'passed' if row_count_match else 'failed'} "
-                f"(source={source_row_count:,}; loaded={loaded_rows:,}; "
-                f"target={target_row_count:,})"
-            )
+                for _, row in metadata.iterrows():
+                    column_catalog_rows.append(
+                        {
+                            "RUN_ID": run_id,
+                            "SOURCE_SYSTEM": source["name"],
+                            "SOURCE_DATABASE": source["database"],
+                            "SOURCE_SCHEMA": source["schema"],
+                            "SOURCE_TABLE": source_table,
+                            "SOURCE_COLUMN": row["COLUMN_NAME"],
+                            "SOURCE_ORDINAL_POSITION": row["ORDINAL_POSITION"],
+                            "SOURCE_DATA_TYPE": row["DATA_TYPE"],
+                            "SOURCE_CHARACTER_MAXIMUM_LENGTH": row[
+                                "CHARACTER_MAXIMUM_LENGTH"
+                            ],
+                            "SOURCE_NUMERIC_PRECISION": row["NUMERIC_PRECISION"],
+                            "SOURCE_NUMERIC_SCALE": row["NUMERIC_SCALE"],
+                            "SOURCE_IS_NULLABLE": row["IS_NULLABLE"],
+                            "TARGET_DATABASE": target["database"],
+                            "TARGET_SCHEMA": target["schema"],
+                            "TARGET_TABLE": target_table,
+                            "TARGET_COLUMN": row["SNOWFLAKE_COLUMN_NAME"],
+                            "TARGET_DATA_TYPE": row["SNOWFLAKE_DATA_TYPE"],
+                            "CATALOGED_AT": loaded_at,
+                        }
+                    )
+
+                table_results.append(
+                    (
+                        source_table,
+                        target_table,
+                        source_row_count,
+                        loaded_rows,
+                        target_row_count,
+                        elapsed,
+                        row_count_match,
+                        load_plan["strategy"],
+                        load_status,
+                    )
+                )
+
+                print_step(f"Loaded {loaded_rows:,} rows in {elapsed:,.1f} seconds")
+                print_step(
+                    f"Validation {'passed' if row_count_match else 'failed'} "
+                    f"(source={source_row_count:,}; loaded={loaded_rows:,}; "
+                    f"target={target_row_count:,})"
+                )
+
+            except Exception as table_error:
+                append_failed_table_result(
+                    table_catalog_rows=table_catalog_rows,
+                    validation_rows=validation_rows,
+                    table_results=table_results,
+                    run_id=run_id,
+                    source=source,
+                    target=target,
+                    source_table=source_table,
+                    target_table=target_table,
+                    table_start=table_start,
+                    table_error=table_error,
+                )
+                continue
 
         write_table_catalog(
             sf_conn,
@@ -445,12 +552,21 @@ def main() -> None:
         )
         print_step("Metadata tables updated")
 
+        failed_tables = [
+            result for result in table_results if result[8] == "FAILED"
+        ]
+
         finish_run_log(
             sf_conn=sf_conn,
             run_id=run_id,
             metadata_database=metadata_config["database"],
             metadata_schema=metadata_config["schema"],
-            status="SUCCESS",
+            status="PARTIAL_SUCCESS" if failed_tables else "SUCCESS",
+            error_message=(
+                f"{len(failed_tables)} table(s) failed"
+                if failed_tables
+                else None
+            ),
         )
         print_step("Metadata run log completed")
 
@@ -479,6 +595,9 @@ def main() -> None:
 
         total_elapsed = perf_counter() - run_start
         print(f"\nCompleted {len(table_results)} table(s) in {total_elapsed:,.1f} seconds")
+
+        if failed_tables:
+            print_error(f"{len(failed_tables)} table(s) failed. Check metadata validation logs.")
 
     except Exception as error:
         finish_run_log(
