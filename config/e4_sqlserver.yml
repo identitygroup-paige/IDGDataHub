@@ -1,0 +1,45 @@
+source:
+  name: E4_SQLSERVER
+  type: sqlserver
+  env_prefix: E4
+  database: Enterprise32
+  schema: dbo
+
+target:
+  database: DATA_VALIDATION
+  schema: RAW_SQL_SERVER
+  table_suffix: _E4
+
+
+load:
+  mode: full_refresh
+  chunk_size: 50000
+  include_tables: []
+  exclude_tables:
+    - Company
+    - CRMEmailAttachment
+    - CRMEventItem
+    - Dmail
+    - EstimateImage
+    - MainMenuIcon
+    - MaterialImages
+    - OrderImage
+    - TempDiagram
+  exclude_empty_tables: true
+
+  
+planning:
+  enabled: false
+
+incremental:
+  enabled: false
+  default_strategy: full_refresh
+  tables: {}
+
+metadata:
+  database: DATA_VALIDATION
+  schema: METADATA
+
+validation:
+  row_count: true
+  fail_on_row_count_mismatch: false

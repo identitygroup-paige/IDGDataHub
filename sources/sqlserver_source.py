@@ -15,6 +15,7 @@ def discover_tables(source_conn, source_config, load_config):
         sql_conn=source_conn,
         source_schema=source_config["schema"],
         include_tables=load_config.get("include_tables", []),
+        exclude_tables=load_config.get("exclude_tables", []),
     )
 
 
