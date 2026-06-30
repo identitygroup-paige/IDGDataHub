@@ -2,35 +2,33 @@ import argparse
 import json
 from pathlib import Path
 
+from semantic.renderer import render_template
 
-def quote_identifier(name: str) -> str:
-    return f'"{name}"'
+
+TEMPLATE_PATH = "semantic/templates/entity_view.sql"
 
 
 def build_entity_view_sql(
     entity: dict,
-    target_database: str = "DATA_VALIDATION",
-    raw_schema: str = "RAW_REDSHIFT",
-    semantic_schema: str = "SEMANTIC",
+    target_database: str,
+    raw_schema: str,
+    semantic_schema: str,
 ) -> str:
-    source_table = entity["source_table"]
-    view_name = entity["view_name"]
-    entity_name = entity["entity_name"]
-
-    return f"""
-CREATE SCHEMA IF NOT EXISTS {target_database}.{semantic_schema};
-
-CREATE OR REPLACE VIEW {target_database}.{semantic_schema}.{quote_identifier(view_name)} AS
-SELECT
-    *,
-'{entity_name}' AS _SEMANTIC_ENTITY_NAME,
-'{source_table}' AS _SEMANTIC_SOURCE_TABLE
-FROM {target_database}.{raw_schema}.{quote_identifier(source_table)};
-""".strip()
+    return render_template(
+        TEMPLATE_PATH,
+        {
+            "target_database": target_database,
+            "semantic_schema": semantic_schema,
+            "raw_schema": raw_schema,
+            "view_name": entity["view_name"],
+            "entity_name": entity["entity_name"],
+            "source_table": entity["source_table"],
+        },
+    )
 
 
 def generate_sql(model: dict, target_database: str, raw_schema: str, semantic_schema: str):
-    statements = []
+    statements = [f"CREATE SCHEMA IF NOT EXISTS {target_database}.{semantic_schema};"]
 
     for entity in model["entities"]:
         statements.append(
@@ -75,4 +73,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
