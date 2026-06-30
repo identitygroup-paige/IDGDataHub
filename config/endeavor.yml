@@ -11,18 +11,13 @@ target:
   table_suffix: _ENDEAV
 
 load:
-  mode: full_refresh
-  chunk_size: 10000
-  include_tables:
-    - Forecast_Snapshot
-    - Forecast_StepDays
-    - Forecast_StepHitRates
-    - Forecast_TaskDays
-    - Forecast_TaskDaysByProjectType
-    # continue with the remaining tables after Forecast_Snapshot
+  mode: incremental
+  chunk_size: 50000
+  include_tables: []
   exclude_empty_tables: true
+
 planning:
-  enabled: false
+  enabled: true
 
 incremental:
   enabled: true
