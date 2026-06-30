@@ -1,0 +1,34 @@
+source:
+  name: QAD_REDSHIFT
+  type: redshift
+  env_prefix: REDSHIFT
+  database: idgbi
+  schema: public
+
+target:
+  database: DATA_VALIDATION
+  schema: RAW_REDSHIFT
+  table_suffix: _QAD
+
+load:
+  mode: full_refresh
+  chunk_size: 50000
+  include_tables:
+    - idg_campus_reference
+  exclude_empty_tables: true
+
+planning:
+  enabled: false
+
+incremental:
+  enabled: false
+  default_strategy: full_refresh
+  tables: {}
+
+metadata:
+  database: DATA_VALIDATION
+  schema: METADATA
+
+validation:
+  row_count: true
+  fail_on_row_count_mismatch: false

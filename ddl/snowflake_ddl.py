@@ -119,3 +119,40 @@ CREATE OR REPLACE TABLE {target_database}.{target_schema}.{target_table} (
 def execute_ddl(sf_conn, ddl: str) -> None:
     with sf_conn.cursor() as cur:
         cur.execute(ddl)
+
+
+def redshift_to_snowflake_type(row) -> str:
+    data_type = str(row["DATA_TYPE"]).lower()
+    max_len = row["CHARACTER_MAXIMUM_LENGTH"]
+    precision = row["NUMERIC_PRECISION"]
+    scale = row["NUMERIC_SCALE"]
+
+    if data_type in {"smallint", "integer", "bigint"}:
+        return "NUMBER(38,0)"
+
+    if data_type in {"numeric", "decimal"}:
+        p = int(precision) if pd.notna(precision) else 38
+        s = int(scale) if pd.notna(scale) else 4
+        return f"NUMBER({min(p, 38)},{s})"
+
+    if data_type in {"real", "double precision"}:
+        return "FLOAT"
+
+    if data_type == "boolean":
+        return "BOOLEAN"
+
+    if data_type == "date":
+        return "DATE"
+
+    if data_type in {"timestamp without time zone", "timestamp"}:
+        return "TIMESTAMP_NTZ"
+
+    if data_type == "timestamp with time zone":
+        return "TIMESTAMP_TZ"
+
+    if data_type in {"character varying", "varchar", "character", "char", "text"}:
+        if pd.isna(max_len):
+            return "VARCHAR"
+        return f"VARCHAR({min(int(max_len), 16777216)})"
+
+    return "VARCHAR"
