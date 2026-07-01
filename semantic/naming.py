@@ -59,3 +59,18 @@ def make_relationship_view_name(
 def make_column_alias(table_name: str, column_name: str) -> str:
     prefix = strip_source_prefix(table_name)
     return f"{prefix}_{column_name.upper()}"
+
+def make_bridge_view_name(from_table: str, to_table: str, source_system: str) -> str:
+    return (
+        f"V_BRIDGE_{strip_source_prefix(from_table)}"
+        f"_TO_{strip_source_prefix(to_table)}"
+        f"_{source_short_name(source_system)}"
+    )
+
+
+def make_summary_view_name(from_table: str, to_table: str, source_system: str) -> str:
+    return (
+        f"V_SUMMARY_{strip_source_prefix(from_table)}"
+        f"_TO_{strip_source_prefix(to_table)}"
+        f"_{source_short_name(source_system)}"
+    )
