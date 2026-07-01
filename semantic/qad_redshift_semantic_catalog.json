@@ -1,6 +1,6 @@
 {
   "source_system": "QAD_REDSHIFT",
-  "generated_at": "2026-07-01T18:35:12.012447+00:00",
+  "generated_at": "2026-07-01T18:47:02.099585+00:00",
   "entity_views": [
     {
       "entity_name": "ESTIMATE",
@@ -59,7 +59,7 @@
       "confidence_label": "HIGH",
       "match_rate": 1.0,
       "cardinality_type": "N:M",
-      "view_name": "V_BRIDGE_ESTIMATE_TO_SARASOTA_ESTIMATE_LINE_QAD"
+      "view_name": "V_BRIDGE_ESTIMATE_TO_SARASOTA_ESTIMATE_LINE_BY_ESTIMATE_NUMBER_QAD"
     },
     {
       "from_table": "IDG_ORDER_QAD",
@@ -69,7 +69,7 @@
       "confidence_label": "HIGH",
       "match_rate": 0.9965307892454467,
       "cardinality_type": "N:M",
-      "view_name": "V_BRIDGE_ORDER_TO_INVOICE_QAD"
+      "view_name": "V_BRIDGE_ORDER_TO_INVOICE_BY_ESTIMATE_NUMBER_QAD"
     },
     {
       "from_table": "IDG_ORDER_QAD",
@@ -79,7 +79,7 @@
       "confidence_label": "MEDIUM",
       "match_rate": 0.9569081003840314,
       "cardinality_type": "N:M",
-      "view_name": "V_BRIDGE_ORDER_TO_INVOICE_QAD"
+      "view_name": "V_BRIDGE_ORDER_TO_INVOICE_BY_PO_NUMBER_QAD"
     }
   ],
   "summary_views": [
@@ -91,7 +91,7 @@
       "confidence_label": "HIGH",
       "match_rate": 1.0,
       "cardinality_type": "N:M",
-      "view_name": "V_SUMMARY_ESTIMATE_TO_SARASOTA_ESTIMATE_LINE_QAD"
+      "view_name": "V_SUMMARY_ESTIMATE_TO_SARASOTA_ESTIMATE_LINE_BY_ESTIMATE_NUMBER_QAD"
     },
     {
       "from_table": "IDG_ORDER_QAD",
@@ -101,7 +101,7 @@
       "confidence_label": "HIGH",
       "match_rate": 0.9965307892454467,
       "cardinality_type": "N:M",
-      "view_name": "V_SUMMARY_ORDER_TO_INVOICE_QAD"
+      "view_name": "V_SUMMARY_ORDER_TO_INVOICE_BY_ESTIMATE_NUMBER_QAD"
     },
     {
       "from_table": "IDG_ORDER_QAD",
@@ -111,7 +111,7 @@
       "confidence_label": "MEDIUM",
       "match_rate": 0.9569081003840314,
       "cardinality_type": "N:M",
-      "view_name": "V_SUMMARY_ORDER_TO_INVOICE_QAD"
+      "view_name": "V_SUMMARY_ORDER_TO_INVOICE_BY_PO_NUMBER_QAD"
     }
   ],
   "skipped_relationships": [

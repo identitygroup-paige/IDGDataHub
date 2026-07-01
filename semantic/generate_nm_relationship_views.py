@@ -2,6 +2,8 @@ import argparse
 import json
 from pathlib import Path
 
+from sqlalchemy.orm import relationship
+
 from connectors.snowflake import get_snowflake_connection
 from semantic.metadata import SemanticMetadata
 from semantic.naming import make_bridge_view_name, make_summary_view_name
@@ -109,12 +111,14 @@ def generate_sql(
                 from_table=relationship["from_table"],
                 to_table=relationship["to_table"],
                 source_system=source_system,
+                join_column=relationship["from_column"],
             )
 
             summary_view_name = make_summary_view_name(
                 from_table=relationship["from_table"],
                 to_table=relationship["to_table"],
                 source_system=source_system,
+                join_column=relationship["from_column"],
             )
 
             bridge_context = build_context(

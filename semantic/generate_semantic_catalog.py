@@ -97,17 +97,19 @@ def build_catalog(model: dict, metadata: SemanticMetadata) -> dict:
         elif cardinality_type in {"1:N", "N:1", "N:M"}:
             bridge_item = item.copy()
             bridge_item["view_name"] = make_bridge_view_name(
-                relationship["from_table"],
-                relationship["to_table"],
-                source_system,
-            )
+    relationship["from_table"],
+    relationship["to_table"],
+    source_system,
+    relationship["from_column"],
+)
 
             summary_item = item.copy()
             summary_item["view_name"] = make_summary_view_name(
-                relationship["from_table"],
-                relationship["to_table"],
-                source_system,
-            )
+    relationship["from_table"],
+    relationship["to_table"],
+    source_system,
+    relationship["from_column"],
+)
 
             catalog["bridge_views"].append(bridge_item)
             catalog["summary_views"].append(summary_item)
