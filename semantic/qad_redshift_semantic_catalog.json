@@ -1,0 +1,152 @@
+{
+  "source_system": "QAD_REDSHIFT",
+  "generated_at": "2026-07-01T18:35:12.012447+00:00",
+  "entity_views": [
+    {
+      "entity_name": "ESTIMATE",
+      "source_table": "IDG_ESTIMATE_QAD",
+      "view_name": "V_ESTIMATE_QAD",
+      "primary_keys": [
+        "ESTIMATE_NUMBER"
+      ],
+      "business_keys": [
+        "PO_NUMBER"
+      ],
+      "unique_attributes": []
+    },
+    {
+      "entity_name": "INVOICE",
+      "source_table": "IDG_INVOICE_QAD",
+      "view_name": "V_INVOICE_QAD",
+      "primary_keys": [],
+      "business_keys": [
+        "JOB_NUMBER",
+        "PO_NUMBER",
+        "ESTIMATE_NUMBER"
+      ],
+      "unique_attributes": []
+    },
+    {
+      "entity_name": "ORDER",
+      "source_table": "IDG_ORDER_QAD",
+      "view_name": "V_ORDER_QAD",
+      "primary_keys": [],
+      "business_keys": [
+        "JOB_NUMBER",
+        "PO_NUMBER",
+        "ESTIMATE_NUMBER"
+      ],
+      "unique_attributes": []
+    },
+    {
+      "entity_name": "ESTIMATE_LINE",
+      "source_table": "IDG_SARASOTA_ESTIMATE_LINE_QAD",
+      "view_name": "V_ESTIMATE_LINE_QAD",
+      "primary_keys": [],
+      "business_keys": [
+        "ESTIMATE_NUMBER"
+      ],
+      "unique_attributes": []
+    }
+  ],
+  "safe_relationship_views": [],
+  "bridge_views": [
+    {
+      "from_table": "IDG_ESTIMATE_QAD",
+      "from_column": "ESTIMATE_NUMBER",
+      "to_table": "IDG_SARASOTA_ESTIMATE_LINE_QAD",
+      "to_column": "ESTIMATE_NUMBER",
+      "confidence_label": "HIGH",
+      "match_rate": 1.0,
+      "cardinality_type": "N:M",
+      "view_name": "V_BRIDGE_ESTIMATE_TO_SARASOTA_ESTIMATE_LINE_QAD"
+    },
+    {
+      "from_table": "IDG_ORDER_QAD",
+      "from_column": "ESTIMATE_NUMBER",
+      "to_table": "IDG_INVOICE_QAD",
+      "to_column": "ESTIMATE_NUMBER",
+      "confidence_label": "HIGH",
+      "match_rate": 0.9965307892454467,
+      "cardinality_type": "N:M",
+      "view_name": "V_BRIDGE_ORDER_TO_INVOICE_QAD"
+    },
+    {
+      "from_table": "IDG_ORDER_QAD",
+      "from_column": "PO_NUMBER",
+      "to_table": "IDG_INVOICE_QAD",
+      "to_column": "PO_NUMBER",
+      "confidence_label": "MEDIUM",
+      "match_rate": 0.9569081003840314,
+      "cardinality_type": "N:M",
+      "view_name": "V_BRIDGE_ORDER_TO_INVOICE_QAD"
+    }
+  ],
+  "summary_views": [
+    {
+      "from_table": "IDG_ESTIMATE_QAD",
+      "from_column": "ESTIMATE_NUMBER",
+      "to_table": "IDG_SARASOTA_ESTIMATE_LINE_QAD",
+      "to_column": "ESTIMATE_NUMBER",
+      "confidence_label": "HIGH",
+      "match_rate": 1.0,
+      "cardinality_type": "N:M",
+      "view_name": "V_SUMMARY_ESTIMATE_TO_SARASOTA_ESTIMATE_LINE_QAD"
+    },
+    {
+      "from_table": "IDG_ORDER_QAD",
+      "from_column": "ESTIMATE_NUMBER",
+      "to_table": "IDG_INVOICE_QAD",
+      "to_column": "ESTIMATE_NUMBER",
+      "confidence_label": "HIGH",
+      "match_rate": 0.9965307892454467,
+      "cardinality_type": "N:M",
+      "view_name": "V_SUMMARY_ORDER_TO_INVOICE_QAD"
+    },
+    {
+      "from_table": "IDG_ORDER_QAD",
+      "from_column": "PO_NUMBER",
+      "to_table": "IDG_INVOICE_QAD",
+      "to_column": "PO_NUMBER",
+      "confidence_label": "MEDIUM",
+      "match_rate": 0.9569081003840314,
+      "cardinality_type": "N:M",
+      "view_name": "V_SUMMARY_ORDER_TO_INVOICE_QAD"
+    }
+  ],
+  "skipped_relationships": [
+    {
+      "from_table": "IDG_ESTIMATE_QAD",
+      "from_column": "ESTIMATE_NUMBER",
+      "to_table": "IDG_SARASOTA_ESTIMATE_LINE_QAD",
+      "to_column": "ESTIMATE_NUMBER",
+      "confidence_label": "HIGH",
+      "match_rate": 1.0,
+      "cardinality_type": "N:M",
+      "skip_reason": "N:M relationship is unsafe for flat joined view",
+      "unsafe_flat_view_name": "V_ESTIMATE_WITH_SARASOTA_ESTIMATE_LINE_QAD"
+    },
+    {
+      "from_table": "IDG_ORDER_QAD",
+      "from_column": "ESTIMATE_NUMBER",
+      "to_table": "IDG_INVOICE_QAD",
+      "to_column": "ESTIMATE_NUMBER",
+      "confidence_label": "HIGH",
+      "match_rate": 0.9965307892454467,
+      "cardinality_type": "N:M",
+      "skip_reason": "N:M relationship is unsafe for flat joined view",
+      "unsafe_flat_view_name": "V_ORDER_WITH_INVOICE_QAD"
+    },
+    {
+      "from_table": "IDG_ORDER_QAD",
+      "from_column": "PO_NUMBER",
+      "to_table": "IDG_INVOICE_QAD",
+      "to_column": "PO_NUMBER",
+      "confidence_label": "MEDIUM",
+      "match_rate": 0.9569081003840314,
+      "cardinality_type": "N:M",
+      "skip_reason": "N:M relationship is unsafe for flat joined view",
+      "unsafe_flat_view_name": "V_ORDER_WITH_INVOICE_QAD"
+    }
+  ]
+}
