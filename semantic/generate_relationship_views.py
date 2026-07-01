@@ -2,16 +2,46 @@ import argparse
 import json
 from pathlib import Path
 
-from semantic.column_selector import quote_identifier
+from connectors.snowflake import get_snowflake_connection
 from semantic.metadata import SemanticMetadata
 from semantic.naming import make_relationship_view_name
 from semantic.relationship_resolver import build_flat_relationship_select
 from semantic.renderer import render_template
-from connectors.snowflake import get_snowflake_connection
 
 
 OBJECT_TEMPLATE = "semantic/templates/relationship_view_object.sql"
 FLAT_TEMPLATE = "semantic/templates/relationship_view_flat.sql"
+
+SAFE_FLAT_CARDINALITIES = {"1:1"}
+SUMMARY_CARDINALITIES = {"1:N", "N:1"}
+SKIP_CARDINALITIES = {"N:M"}
+
+
+def relationship_key(relationship: dict) -> tuple[str, str, str, str]:
+    return (
+        relationship["from_table"],
+        relationship["from_column"],
+        relationship["to_table"],
+        relationship["to_column"],
+    )
+
+
+def build_cardinality_lookup(cardinality_df) -> dict:
+    lookup = {}
+
+    if cardinality_df.empty:
+        return lookup
+
+    for _, row in cardinality_df.iterrows():
+        key = (
+            row["FROM_TABLE"],
+            row["FROM_COLUMN"],
+            row["TO_TABLE"],
+            row["TO_COLUMN"],
+        )
+        lookup[key] = row["CARDINALITY_TYPE"]
+
+    return lookup
 
 
 def build_relationship_context(
@@ -83,6 +113,23 @@ def build_relationship_view_sql(
     return render_template(template, context)
 
 
+def should_generate_relationship(
+    relationship: dict,
+    cardinality_type: str | None,
+    mode: str,
+) -> tuple[bool, str]:
+    if relationship["confidence_label"] not in {"HIGH", "MEDIUM"}:
+        return False, "confidence below generation threshold"
+
+    if cardinality_type in SKIP_CARDINALITIES:
+        return False, "N:M relationship requires bridge/manual modeling"
+
+    if mode == "flat" and cardinality_type not in SAFE_FLAT_CARDINALITIES:
+        return False, f"{cardinality_type or 'UNKNOWN'} is not safe for flat view"
+
+    return True, "safe to generate"
+
+
 def generate_sql(
     model: dict,
     target_database: str,
@@ -99,12 +146,34 @@ def generate_sql(
         metadata = SemanticMetadata(sf_conn)
         source_system = model["source_system"]
 
+        cardinality = metadata.get_cardinality(source_system)
+        cardinality_lookup = build_cardinality_lookup(cardinality)
+
         statements = [
             f"CREATE SCHEMA IF NOT EXISTS {target_database}.{semantic_schema};"
         ]
 
+        generated_count = 0
+        skipped_count = 0
+
         for relationship in model["relationships"]:
-            if relationship["confidence_label"] not in {"HIGH", "MEDIUM"}:
+            key = relationship_key(relationship)
+            cardinality_type = cardinality_lookup.get(key)
+
+            should_generate, reason = should_generate_relationship(
+                relationship=relationship,
+                cardinality_type=cardinality_type,
+                mode=mode,
+            )
+
+            if not should_generate:
+                skipped_count += 1
+                print(
+                    "Skipping relationship view: "
+                    f"{relationship['from_table']}.{relationship['from_column']} → "
+                    f"{relationship['to_table']}.{relationship['to_column']} "
+                    f"({cardinality_type or 'UNKNOWN'}): {reason}"
+                )
                 continue
 
             statements.append(
@@ -118,6 +187,10 @@ def generate_sql(
                     mode=mode,
                 )
             )
+            generated_count += 1
+
+        print(f"Generated relationship views: {generated_count}")
+        print(f"Skipped relationship views: {skipped_count}")
 
         return "\n\n".join(statements) + "\n"
 

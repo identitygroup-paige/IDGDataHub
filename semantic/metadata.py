@@ -60,3 +60,14 @@ class SemanticMetadata:
         return normalize_columns(
             pd.read_sql(query, self.sf_conn, params=[source_system])
         )
+    
+    def get_cardinality(self, source_system: str) -> pd.DataFrame:
+        query = """
+            SELECT *
+            FROM DATA_VALIDATION.INTELLIGENCE.V_RELATIONSHIP_CARDINALITY_LATEST
+            WHERE SOURCE_SYSTEM = %s
+        """
+
+        return normalize_columns(
+            pd.read_sql(query, self.sf_conn, params=[source_system])
+        )
